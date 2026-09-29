@@ -22,6 +22,7 @@ syntax match vimshellFlag /\s\zs--\=[a-zA-Z][a-zA-Z0-9-]*/
 syntax match vimshellError /\<[Ee]rror\>\|\<[Ff]ailed\>\|\<[Ff]ailure\>\|No such file\|command not found\|Permission denied/
 
 highlight default link vimshellPrompt Identifier
+highlight default link vimshellCont Identifier
 highlight default link vimshellNote Comment
 highlight default link vimshellString String
 highlight default link vimshellVariable PreProc
