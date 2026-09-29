@@ -1,0 +1,109 @@
+*vimshell.txt*  Emacs shell-mode in Vim
+
+==============================================================================
+CONTENTS                                                    *vimshell-contents*
+
+    1. Introduction .......................... |vimshell-introduction|
+    2. Usage ................................. |vimshell-usage|
+    3. Commands .............................. |vimshell-commands|
+    4. Mappings .............................. |vimshell-mappings|
+    5. Configuration ......................... |vimshell-configuration|
+    6. Limitations ........................... |vimshell-limitations|
+    7. License ............................... |vimshell-license|
+
+==============================================================================
+1. INTRODUCTION                                         *vimshell-introduction*
+
+VimShell is Emacs shell-mode in Vim: a normal, editable buffer with ONE
+persistent shell underneath (a job over pipes, no pty). Vim only carries
+prompt lines to the job and pastes back the output; the shell itself
+handles everything: cd, aliases, variables, functions, pipes... they
+persist on their own because the process is always the same.
+
+Typing "exit" kills the shell; pressing <CR> restarts it.
+
+Requires Vim with |job| and |channel| support (":echo has('job')" is 1).
+
+==============================================================================
+2. USAGE                                                       *vimshell-usage*
+
+To start VimShell, use any of the following commands:
+
+    :VimShell          Open in current window
+    :VimShellOpen      Open in a new window
+    :VimShellSplit     Open in a horizontal split
+    :VimShellVSplit    Open in a vertical split
+
+Completion is Tab-driven: commands on the first word ($PATH plus common
+builtins), paths on the rest (relative, absolute and ~/..., directories
+with trailing /), flags of the command when the fragment starts with -
+(from --help, cached per command). One candidate replaces the fragment;
+several extend the common prefix or get listed right in the buffer,
+above the prompt, without touching what you typed. Anything
+else is Vim's native completion on an editable buffer (i_CTRL-X_CTRL-F
+for files, i_CTRL-N for words...).
+
+The buffer has shell highlighting (prompt, strings, $variables,
+comments, numbers, operators, flags, suspicious errors).
+
+==============================================================================
+3. COMMANDS                                                 *vimshell-commands*
+
+:VimShell          Open VimShell in the current window.
+:VimShellOpen      Open VimShell in a new window.
+:VimShellSplit     Open VimShell in a horizontal split.
+:VimShellVSplit    Open VimShell in a vertical split.
+:VimShellShell {shell}
+                 Use another shell for new buffers.
+
+==============================================================================
+4. MAPPINGS                                                 *vimshell-mappings*
+
+<CR>             Execute the prompt line (RET).
+<CR> on old line  Copy it to the prompt without executing (like Emacs).
+<C-p>/<Up>       Previous history entry (M-p).
+<C-n>/<Down>     Next history entry (M-n).
+<Tab>            Complete: commands, paths or flags (-x, --long).
+<C-c>            Real SIGINT to the job.
+<C-d>            EOF with empty input (closes the shell).
+<C-l>            Clear the buffer.
+
+==============================================================================
+5. CONFIGURATION                                       *vimshell-configuration*
+
+g:vimshell_shell          Default: $SHELL (or 'sh')
+    The shell to run. It is invoked with -i so it loads your rc file
+    (aliases, prompt...). bash is also passed --noediting because it
+    uses readline even on pipes. fish cannot work (see below) and
+    falls back to sh with a warning.
+    Example: >
+        let g:vimshell_shell = 'bash'
+
+g:vimshell_prompt         Default: 'vimsh$ '
+    Prompt template, expanded when printed: $PWD (Vim cwd, plain
+    "cd <dir>" in the shell :cds along), $HOME, $USER, $SHELL,
+    $HOSTNAME and their ${...} forms; $$ is a literal $. Unknown
+    names ($?, $FOO...) are left alone.
+
+==============================================================================
+6. LIMITATIONS                                           *vimshell-limitations*
+
+No pty means no magic:
+
+- No interactive programs: vim, less, htop, fzf... need a terminal,
+  use |:terminal| for those. "clear" works (handled by the buffer).
+- fish is unusable as the inferior shell: with piped stdin it reads
+  to EOF before executing anything.
+- The prompt expands when printed; $PWD is Vim's cwd (plain "cd <dir>"
+  in the shell follows via :cd, cd with vars/globs or inside scripts
+  does not).
+- If your rc prints a prompt unconditionally you will see extra
+  lines: guard it with "[ -t 1 ] && PS1=...".
+
+==============================================================================
+7. LICENSE                                                   *vimshell-license*
+
+MIT License
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
