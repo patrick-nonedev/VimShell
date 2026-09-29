@@ -1,12 +1,12 @@
-# VimShell v2.0.0
+# VimShell v3.0.0
 
-Emacs shell-mode in Vim: a normal, editable buffer with **one persistent
-shell underneath** (a job over pipes, no pty).
+Emacs shell-mode in Vim: a normal buffer with **one persistent shell
+underneath** (a job over pipes, no pty).
 
-Vim only carries prompt lines to the shell and pastes back the output;
-the shell handles everything: `cd`, aliases, variables, functions,
-pipes, `&&`... they persist on their own because the process is always
-the same. `exit` kills the shell and `RET` restarts it.
+The shell writes straight into the buffer (Vim routes its stdout there;
+nothing is captured or reimplemented). You type on the prompt lines,
+which are editable like any Vim text; everything else is read-only.
+What you send is exactly what you typed — no magic.
 
 ## Requirements
 
@@ -14,15 +14,9 @@ Vim with `+job` and `+channel` (`:echo has('job')` must show `1`).
 
 ## Installation
 
-### Pathogen
-```bash
-cd ~/.vim/bundle
-git clone <url> vimshell
-```
-
 ### vim-plug
 ```vim
-Plug 'patrick-nonedev/vimshell'
+Plug 'your-user/vimshell'
 ```
 
 ### Manual
@@ -37,12 +31,16 @@ Copy the `vimshell` directory to `~/.vim/pack/vimshell/start/`
 :VimShellVSplit    " Open in a vertical split
 ```
 
+Type on a prompt line, `RET` sends it. `RET` on an old line copies it to
+a fresh prompt instead of executing (like Emacs). `RET` on empty input
+sends a newline. `exit` kills the shell; `RET` restarts it.
+
 ## Keys (Emacs-like)
 
 | Key | Action |
 |-----|--------|
-| `<CR>` | Execute the line (`RET`) |
-| `<CR>` on old line | Copy it to the prompt without executing |
+| `<CR>` | Send the current prompt line (`RET`) |
+| `<CR>` on old line | Copy it to a fresh prompt |
 | `<C-p>` / `<Up>`, `<C-n>` / `<Down>` | History (`M-p` / `M-n`) |
 | `<Tab>` | Complete: commands, paths or flags (`-x`, `--long`) |
 | `<C-c>` | Real SIGINT to the job |
@@ -51,12 +49,10 @@ Copy the `vimshell` directory to `~/.vim/pack/vimshell/start/`
 
 One `<Tab>` candidate replaces the fragment (commands and flags with a
 trailing space, directories with `/`); several extend the common prefix
-or get listed **right in the buffer**, above the prompt, without touching
-what you typed (keep typing to narrow it down, or `RET` on an old line
-copies it). Flags come from `--help` (cached per command). Works
-mid-line: it completes the whole token under the cursor. Anything else
-is Vim's native completion on an editable buffer (`CTRL-X CTRL-F`,
-`CTRL-N`...).
+or get listed **right in the buffer** without touching what you typed.
+Flags come from `--help` (cached per command). Works mid-line: it
+completes the whole token under the cursor. Anything else is Vim's
+native completion on editable text (`CTRL-X CTRL-F`, `CTRL-N`...).
 
 The buffer has shell highlighting (prompt, strings, `$variables`,
 comments, numbers, operators, flags, and anything that smells like an
@@ -72,19 +68,20 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `g:vimshell_shell` | `$SHELL` (or `sh`) | Shell to run with `-i` so it loads your rc (`:VimShellShell` changes it at runtime for new buffers) |
-| `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, with variables (expanded when printed) |
+| `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, expanded once when the shell starts |
 
 ### Prompt variables
 
 | Variable | Value |
 |----------|-------|
-| `$PWD` | Vim cwd (plain `cd <dir>` in the shell `:cd`s along) |
+| `$PWD` | Vim cwd at shell start |
 | `$HOME`, `$USER`, `$HOSTNAME` | The usual ones |
 | `$SHELL` | The configured shell |
 | `${VAR}` | Braced form |
 | `$$` | Literal `$` |
 
-Unknown names (`$?`, `$FOO`...) are left alone.
+Anything else (`$?`, `$FOO`...) is removed: the prompt must stay static
+so it can be recognized. Single-line prompts only.
 
 ## Honest limitations (no pty, no magic)
 
@@ -94,11 +91,9 @@ Unknown names (`$?`, `$FOO`...) are left alone.
 - **fish doesn't work** as the inferior shell: with piped stdin it reads
   to EOF before executing anything. If your `$SHELL` is fish, VimShell
   warns and falls back to `sh` (override with `g:vimshell_shell`).
-- **The prompt is static**: it expands when printed; `$PWD` is Vim's cwd
-  (a plain `cd` in the shell syncs it via `:cd`, but a `cd` with
-  vars/globs or inside a script does not).
-- **`cd` only moves Vim for plain paths**: shell and Vim have different
-  cwds unless the command is `cd <dir>` or bare `cd`.
+- **The prompt is static**: expanded once at shell start. `cd` still
+  moves Vim too (plain paths), which keeps completion honest, but the
+  printed prompt won't follow.
 - If your rc prints a prompt unconditionally you'll see extra lines:
   guard it with `[ -t 1 ] && PS1=...`.
 

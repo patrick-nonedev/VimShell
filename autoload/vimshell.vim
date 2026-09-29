@@ -1,8 +1,12 @@
 " vimshell: Emacs shell-mode in Vim.
-" Editable buffer over one persistent shell job (pipes, no pty).
+" Editable input over one persistent shell job. Output goes straight
+" from the shell to the buffer (out_io=buffer); only the prompt lines
+" are editable, everything else is read-only.
 
 let s:prompt_default = 'vimsh$ '
 let s:history_max = 1000
+let s:ps2 = '> '
+let s:noise = 'terminal process group\|grupo de proceso de terminal\|no job control in this shell\|no hay control de trabajos en este shell'
 
 function! vimshell#Open(kind) abort
   if !has('job') || !has('channel')
@@ -22,9 +26,12 @@ function! vimshell#Open(kind) abort
     return
   endif
   call s:SetupBuffer()
+  let b:vimshell_ps1 = s:ShellPrompt()
+  call s:DefinePromptSyntax()
   call s:StartJob()
   if !get(b:, 'vimshell_dead', 0)
-    call vimshell#PrintPrompt()
+    setlocal modifiable
+    silent! startinsert!
   endif
 endfunction
 
@@ -32,12 +39,11 @@ function! s:SetupBuffer() abort
   setlocal buftype=nofile bufhidden=hide noswapfile nobuflisted
   setlocal filetype=vimshell
   setlocal nowrap nonumber norelativenumber nocursorline nolist
+  setlocal nomodifiable
   let b:vimshell_history = []
   let b:vimshell_history_idx = 0
-  let b:vimshell_partial = ''
   let b:vimshell_dead = 0
-  let b:vimshell_prompt_lnum = 0
-  let b:vimshell_prompt = ''
+  let b:vimshell_ps1 = ''
   let b:vimshell_last_list = ''
   nnoremap <buffer> <CR> :call vimshell#ExecuteLine()<CR>
   inoremap <buffer> <CR> <C-o>:call vimshell#ExecuteLine()<CR>
@@ -55,13 +61,16 @@ function! s:SetupBuffer() abort
   inoremap <buffer> <C-l> <C-o>:call vimshell#ClearScreen()<CR>
   nnoremap <buffer> <C-l> :call vimshell#ClearScreen()<CR>
   inoremap <expr> <buffer> <Tab> pumvisible() ? "\<C-n>" : "\<C-o>:call vimshell#Complete()<CR>"
+  autocmd CursorMoved,CursorMovedI,BufEnter <buffer> call vimshell#SyncModifiable()
 endfunction
 
+" Prompt template from config.
 function! s:Prompt() abort
   return get(g:, 'vimshell_prompt', s:prompt_default)
 endfunction
 
-" Expand $PWD, $HOME, $USER, $SHELL, $HOSTNAME and ${...}; $$ is literal.
+" Expanded prompt for PS1. Unknown $vars are removed: a dynamic PS1
+" would break prefix matching, so only the documented ones survive.
 function! s:ExpandPrompt() abort
   let l:p = substitute(s:Prompt(), '\$\$', "\x01", 'g')
   let l:shell = split(get(g:, 'vimshell_shell', $SHELL))
@@ -72,14 +81,21 @@ function! s:ExpandPrompt() abort
     let l:p = substitute(l:p, '\${' . l:k . '}', '\=' . string(l:v), 'g')
     let l:p = substitute(l:p, '\$' . l:k . '\>', '\=' . string(l:v), 'g')
   endfor
+  let l:p = substitute(l:p, '\${\w\+}', '', 'g')
+  let l:p = substitute(l:p, '\$\w\+', '', 'g')
   return substitute(l:p, "\x01", '$', 'g')
 endfunction
 
-" Highlight the prompt prefix of the current line (matched by line
-" number and expanded text, which may change).
-function! s:HighlightPrompt(lnum) abort
+" PS1 text as printed by the shell (single expansion per session).
+function! s:ShellPrompt() abort
+  return s:ExpandPrompt()
+endfunction
+
+function! s:DefinePromptSyntax() abort
   silent! syntax clear vimshellPrompt
-  execute 'syntax match vimshellPrompt /\%' . a:lnum . 'l^\V' . escape(get(b:, 'vimshell_prompt', ''), '/\') . '/'
+  silent! syntax clear vimshellCont
+  execute 'syntax match vimshellPrompt /^\V' . escape(b:vimshell_ps1, '/\') . '/'
+  execute 'syntax match vimshellCont /^\V' . escape(s:ps2, '/\') . '/'
 endfunction
 
 function! s:ShellArgv() abort
@@ -92,12 +108,14 @@ function! s:ShellArgv() abort
     return []
   endif
   if l:argv[0] =~# 'fish$'
-    " fish only reads piped stdin at EOF, so it can't work here.
+    " fish with piped stdin reads to EOF before executing: unusable
+    " as an inferior interactive shell (same as in Emacs shell-mode).
     call s:Note('[vimshell] fish needs a tty, falling back to sh (set g:vimshell_shell to override)')
     let l:argv = ['sh']
   endif
-  " -i loads the rc file. bash needs --noediting: it uses readline even
-  " on pipes. Matched on the resolved binary (sh is often a symlink).
+  " -i loads the rc file. bash needs --noediting: it uses readline
+  " even on pipes (stderr echo and dangerous TABs). Matched on the
+  " resolved binary (sh is often a symlink).
   if resolve(exepath(l:argv[0])) =~# 'bash'
     let l:argv += ['--noediting', '-i']
   else
@@ -113,14 +131,19 @@ function! s:StartJob() abort
     let b:vimshell_dead = 1
     return
   endif
+  " PS1 ends with newline so prompts flush as complete lines instead
+  " of merging with the next output line.
+  let l:ps1 = b:vimshell_ps1 . (b:vimshell_ps1 =~# '\n$' ? '' : "\n")
+  call s:Unlock()
   let b:vimshell_job = job_start(l:argv, {
-        \ 'in_io': 'pipe', 'out_io': 'pipe', 'err_io': 'pipe',
-        \ 'out_mode': 'raw', 'err_mode': 'raw',
-        \ 'out_cb': function('vimshell#OnOutput', [bufnr('')]),
-        \ 'err_cb': function('vimshell#OnOutput', [bufnr('')]),
+        \ 'in_io': 'pipe',
+        \ 'out_io': 'buffer',
+        \ 'out_buf': bufnr(''),
+        \ 'err_io': 'pipe',
+        \ 'err_cb': function('vimshell#OnErr', [bufnr('')]),
         \ 'exit_cb': function('vimshell#OnExit', [bufnr('')]),
         \ 'env': {'TERM': 'dumb', 'PAGER': 'cat', 'MANPAGER': 'cat',
-        \         'PS1': '', 'PS2': ''}})
+        \         'PS1': l:ps1, 'PS2': s:ps2}})
   if job_status(b:vimshell_job) !=# 'run'
     call s:Note('[vimshell] could not start: ' . join(l:argv))
     let b:vimshell_dead = 1
@@ -129,28 +152,46 @@ function! s:StartJob() abort
   endif
 endfunction
 
-function! vimshell#SetShell(shell) abort
-  let l:parts = split(a:shell)
-  if empty(l:parts) || !executable(l:parts[0])
-    echoerr '[vimshell] shell not found: ' . a:shell
+" Read-only everywhere except empty buffer and prompt lines.
+function! vimshell#SyncModifiable() abort
+  if line('$') == 1 && getline(1) ==# ''
+    setlocal modifiable
     return
   endif
-  let g:vimshell_shell = a:shell
-  echo '[vimshell] shell set to ' . a:shell . ' (new buffers)'
+  let l:line = getline('.')
+  let l:ps1 = get(b:, 'vimshell_ps1', '')
+  if l:ps1 !=# '' && strpart(l:line, 0, len(l:ps1)) ==# l:ps1
+    setlocal modifiable
+    return
+  endif
+  if strpart(l:line, 0, len(s:ps2)) ==# s:ps2
+    setlocal modifiable
+    return
+  endif
+  setlocal nomodifiable
 endfunction
 
-function! vimshell#PrintPrompt() abort
-  let b:vimshell_prompt = s:ExpandPrompt()
-  let b:vimshell_last_list = ''
-  if line('$') == 1 && getline(1) ==# ''
-    call setline(1, b:vimshell_prompt)
+function! s:Unlock() abort
+  call setbufvar(bufnr(''), '&modifiable', 1)
+endfunction
+
+function! s:FixModifiable(buf) abort
+  if bufnr('') == a:buf
+    call vimshell#SyncModifiable()
   else
-    call append(line('$'), b:vimshell_prompt)
+    call setbufvar(a:buf, '&modifiable', 0)
   endif
-  let b:vimshell_prompt_lnum = line('$')
-  call s:HighlightPrompt(b:vimshell_prompt_lnum)
-  call cursor(line('$'), col('$'))
-  silent! startinsert!
+endfunction
+
+function! s:StripPrompt(line) abort
+  let l:ps1 = get(b:, 'vimshell_ps1', '')
+  if l:ps1 !=# '' && strpart(a:line, 0, len(l:ps1)) ==# l:ps1
+    return strpart(a:line, len(l:ps1))
+  endif
+  if strpart(a:line, 0, len(s:ps2)) ==# s:ps2
+    return strpart(a:line, len(s:ps2))
+  endif
+  return a:line
 endfunction
 
 function! vimshell#ExecuteLine() abort
@@ -159,36 +200,37 @@ function! vimshell#ExecuteLine() abort
     if get(b:, 'vimshell_dead', 0)
       return
     endif
-    call vimshell#PrintPrompt()
     return
   endif
-  if get(b:, 'vimshell_prompt_lnum', 0) < 1 || b:vimshell_prompt_lnum > line('$')
-    call vimshell#PrintPrompt()
+  let l:cur = getline('.')
+  if l:cur ==# ''
+    call s:SendRaw("\n")
     return
   endif
-  " RET on an old line copies it to the prompt without executing.
-  if line('.') != b:vimshell_prompt_lnum
-    let l:old = getline('.')
-    let l:prompt = get(b:, 'vimshell_prompt', '')
-    if l:prompt !=# '' && strpart(l:old, 0, len(l:prompt)) ==# l:prompt
-      let l:old = strpart(l:old, len(l:prompt))
+  let l:prompt = get(b:, 'vimshell_ps1', '')
+  if l:prompt ==# '' || strpart(l:cur, 0, len(l:prompt)) !=# l:prompt
+    if strpart(l:cur, 0, len(s:ps2)) !=# s:ps2
+      call s:CopyToPrompt(l:cur)
+      return
     endif
-    call setline(b:vimshell_prompt_lnum, l:prompt . l:old)
-    call cursor(b:vimshell_prompt_lnum, col('$'))
-    silent! startinsert!
-    return
   endif
-  let l:cmd = strpart(getline('.'), len(get(b:, 'vimshell_prompt', '')))
+  let l:cmd = s:StripPrompt(l:cur)
   if l:cmd ==# ''
+    call s:SendRaw("\n")
     return
   endif
-  " clear is buffer business (TERM=dumb has no escapes to interpret).
+  " clear is buffer business (TERM=dumb has no escapes).
   if l:cmd =~# '^\s*clear\s*$'
     call vimshell#ClearScreen()
     return
   endif
-  " Plain `cd <dir>` also :cds so $PWD stays truthful. Anything
-  " fancier (vars, globs, quotes) moves only the shell.
+  call add(b:vimshell_history, l:cmd)
+  if len(b:vimshell_history) > s:history_max
+    call remove(b:vimshell_history, 0)
+  endif
+  let b:vimshell_history_idx = len(b:vimshell_history)
+  " Plain `cd <dir>` also :cds so $PWD-based completion stays truthful.
+  " Anything fancier (vars, globs, quotes) moves only the shell.
   if l:cmd =~# '^\s*cd\s*$'
     execute 'cd ' . fnameescape($HOME)
   else
@@ -200,24 +242,46 @@ function! vimshell#ExecuteLine() abort
       endif
     endif
   endif
-  call add(b:vimshell_history, l:cmd)
-  if len(b:vimshell_history) > s:history_max
-    call remove(b:vimshell_history, 0)
+  if !exists('b:vimshell_job') || job_status(b:vimshell_job) !=# 'run'
+    let b:vimshell_dead = 1
+    call s:Note('[vimshell] process is not running')
+    return
   endif
-  let b:vimshell_history_idx = len(b:vimshell_history)
+  call s:SendRaw(l:cmd . "\n")
+endfunction
+
+" Copy old text to a fresh prompt line without executing (Emacs).
+function! s:CopyToPrompt(text) abort
+  call s:Unlock()
+  let l:prompt = get(b:, 'vimshell_ps1', '')
+  if line('$') > 1 || getline(1) !=# ''
+    let l:last = getline('$')
+    if l:prompt ==# '' || strpart(l:last, 0, len(l:prompt)) !=# l:prompt
+      call append(line('$'), l:prompt . a:text)
+      call cursor(line('$'), col('$'))
+      call s:FixModifiable(bufnr(''))
+      silent! startinsert!
+      return
+    endif
+  endif
+  call setline(line('$'), l:prompt . a:text)
+  call cursor(line('$'), col('$'))
+  call s:FixModifiable(bufnr(''))
+  silent! startinsert!
+endfunction
+
+function! s:SendRaw(text) abort
   if !exists('b:vimshell_job') || job_status(b:vimshell_job) !=# 'run'
     let b:vimshell_dead = 1
     call s:Note('[vimshell] process is not running')
     return
   endif
   try
-    call ch_sendraw(b:vimshell_job, l:cmd . "\n")
+    call ch_sendraw(b:vimshell_job, a:text)
   catch
     let b:vimshell_dead = 1
     call s:Note('[vimshell] process is not running')
-    return
   endtry
-  call vimshell#PrintPrompt()
 endfunction
 
 function! vimshell#HistoryPrev() abort
@@ -232,17 +296,21 @@ function! s:HistoryGo(dir) abort
   if empty(get(b:, 'vimshell_history', []))
     return
   endif
-  if get(b:, 'vimshell_prompt_lnum', 0) < 1 || b:vimshell_prompt_lnum > line('$')
-    call vimshell#PrintPrompt()
-    return
-  endif
   let b:vimshell_history_idx += a:dir
   let b:vimshell_history_idx = max([0, min([b:vimshell_history_idx, len(b:vimshell_history)])])
   let l:cmd = b:vimshell_history_idx < len(b:vimshell_history)
         \ ? b:vimshell_history[b:vimshell_history_idx] : ''
-  call setline(b:vimshell_prompt_lnum, get(b:, 'vimshell_prompt', '') . l:cmd)
-  call s:HighlightPrompt(b:vimshell_prompt_lnum)
-  call cursor(b:vimshell_prompt_lnum, col('$'))
+  let l:lnum = s:PromptLine()
+  if l:lnum == 0
+    call s:Unlock()
+    call append(line('$'), get(b:, 'vimshell_ps1', '') . l:cmd)
+    let l:lnum = line('$')
+  else
+    call s:Unlock()
+    call setline(l:lnum, get(b:, 'vimshell_ps1', '') . l:cmd)
+  endif
+  call cursor(l:lnum, col('$'))
+  call s:FixModifiable(bufnr(''))
 endfunction
 
 function! vimshell#Interrupt() abort
@@ -255,21 +323,28 @@ function! vimshell#Eof() abort
   if get(b:, 'vimshell_dead', 0)
     return
   endif
-  if s:CurrentInput() ==# '' && exists('b:vimshell_job')
+  let l:cur = getline('.')
+  if s:StripPrompt(l:cur) ==# '' && exists('b:vimshell_job')
     silent! call ch_close_in(b:vimshell_job)
   endif
 endfunction
 
-function! s:CurrentInput() abort
-  if get(b:, 'vimshell_prompt_lnum', 0) < 1 || b:vimshell_prompt_lnum > line('$')
-    return ''
-  endif
-  return strpart(getline(b:vimshell_prompt_lnum), len(get(b:, 'vimshell_prompt', '')))
+function! vimshell#ClearScreen() abort
+  call s:Unlock()
+  silent! %delete _
+  call cursor(1, 1)
+  call s:FixModifiable(bufnr(''))
+  silent! startinsert!
 endfunction
 
-function! vimshell#ClearScreen() abort
-  silent! %delete _
-  call vimshell#PrintPrompt()
+function! vimshell#SetShell(shell) abort
+  let l:parts = split(a:shell)
+  if empty(l:parts) || !executable(l:parts[0])
+    echoerr '[vimshell] shell not found: ' . a:shell
+    return
+  endif
+  let g:vimshell_shell = a:shell
+  echo '[vimshell] shell set to ' . a:shell . ' (new buffers)'
 endfunction
 
 " Common builtins for first-word completion (plus $PATH).
@@ -290,8 +365,6 @@ function! s:PathCommands() abort
   return g:vimshell_path_cache
 endfunction
 
-" Flags from --help, cached per command. Long flags always; short ones
-" only when it really looks like help (else -h may have listed a dir).
 function! s:CommandFlags(cmd) abort
   if !exists('g:vimshell_flags_cache')
     let g:vimshell_flags_cache = {}
@@ -407,17 +480,15 @@ endfunction
 " <Tab>: commands first, paths after, flags when the fragment starts
 " with -. One candidate replaces; several extend or get listed.
 function! vimshell#Complete() abort
-  if get(b:, 'vimshell_prompt_lnum', 0) < 1 || b:vimshell_prompt_lnum > line('$')
+  let l:lnum = s:PromptLine()
+  if l:lnum == 0
     return ''
   endif
-  let l:lnum = b:vimshell_prompt_lnum
-  let l:prompt = get(b:, 'vimshell_prompt', '')
+  let l:prompt = get(b:, 'vimshell_ps1', '')
   let l:input = strpart(getline(l:lnum), len(l:prompt))
-  " Complete the whole token under the cursor; splitting at the cursor
-  " used to duplicate text ('dir/' + 'r' -> 'dir/r').
-  let l:cut = max([0, min([col('.') - 1 - len(l:prompt), len(l:input)])])
-  if line('.') != l:lnum
-    let l:cut = len(l:input)
+  let l:cut = len(l:input)
+  if line('.') == l:lnum
+    let l:cut = max([0, min([col('.') - 1 - len(l:prompt), len(l:input)])])
   endif
   let l:ts = l:cut
   if !(l:cut < len(l:input) && strpart(l:input, l:cut, 1) =~# '\s')
@@ -457,7 +528,7 @@ function! vimshell#Complete() abort
   else
     let l:pick = s:CommonPrefix(l:cands)
     if l:pick ==# l:frag
-      " List in the buffer above the prompt, keeping typed text; skip
+      " List in the buffer below the prompt, keeping typed text; skip
       " repeats so double-Tab doesn't pile up.
       let l:key = l:frag . "\x01" . join(sort(copy(l:cands)), "\x02")
       if get(b:, 'vimshell_last_list', '') ==# l:key
@@ -472,31 +543,31 @@ function! vimshell#Complete() abort
       return ''
     endif
   endif
+  call s:Unlock()
   call setline(l:lnum, l:prompt . l:head . l:pick . l:after)
   call cursor(l:lnum, len(l:prompt . l:head . l:pick) + 1)
+  call s:FixModifiable(bufnr(''))
   return ''
 endfunction
 
-function! vimshell#OnOutput(buf, channel, msg) abort
-  if !bufexists(a:buf)
-    return
-  endif
-  let l:text = getbufvar(a:buf, 'vimshell_partial', '') . a:msg
-  let l:lines = split(l:text, "\n", 1)
-  call setbufvar(a:buf, 'vimshell_partial', remove(l:lines, -1))
-  let l:out = []
-  for l:line in l:lines
-    let l:line = s:Sanitize(l:line)
-    " Drop bash's job-control startup warnings (EN/ES). They only say
-    " there is no tty, which we already know.
-    if l:line =~# 'terminal process group\|grupo de proceso de terminal\|no job control in this shell\|no hay control de trabajos en este shell'
-      continue
+" Line to complete/recall on: the cursor's own prompt line, else the
+" last line if it is a prompt, else none (0).
+function! s:PromptLine() abort
+  let l:ps1 = get(b:, 'vimshell_ps1', '')
+  if l:ps1 !=# ''
+    let l:cur = getline('.')
+    if strpart(l:cur, 0, len(l:ps1)) ==# l:ps1
+      return line('.')
     endif
-    call add(l:out, l:line)
-  endfor
-  if !empty(l:out)
-    call s:AppendOutput(a:buf, l:out)
+    if line('$') == 1 && getline(1) ==# ''
+      return 1
+    endif
+    let l:last = getline('$')
+    if strpart(l:last, 0, len(l:ps1)) ==# l:ps1
+      return line('$')
+    endif
   endif
+  return 0
 endfunction
 
 " No pty means escapes are always garbage.
@@ -509,28 +580,24 @@ function! s:AppendOutput(buf, lines) abort
   if !bufexists(a:buf) || empty(a:lines)
     return
   endif
-  let l:n = len(getbufline(a:buf, 1, '$'))
-  let l:at = l:n
-  let l:prompt = getbufvar(a:buf, 'vimshell_prompt', '')
-  if l:prompt !=# '' && l:n > 0 && strpart(getbufline(a:buf, l:n)[0], 0, len(l:prompt)) ==# l:prompt
-    let l:at = l:n - 1
-  endif
-  call appendbufline(a:buf, l:at, a:lines)
-  " Track the prompt mark (and its highlight when current) as output
-  " pushes it down.
-  if l:at == l:n - 1
-    call setbufvar(a:buf, 'vimshell_prompt_lnum', l:n + len(a:lines))
-    if bufnr('') == a:buf
-      call s:HighlightPrompt(l:n + len(a:lines))
-      if line('.') == l:n
-        call cursor(l:n + len(a:lines), col('.'))
-      endif
-    endif
-  endif
+  call setbufvar(a:buf, '&modifiable', 1)
+  call appendbufline(a:buf, len(getbufline(a:buf, 1, '$')), a:lines)
+  call s:FixModifiable(a:buf)
 endfunction
 
 function! s:Note(msg) abort
   call s:AppendOutput(bufnr(''), [a:msg])
+endfunction
+
+" stderr mainly carries the shell's own noise; drop the known lines.
+function! vimshell#OnErr(buf, channel, msg) abort
+  if !bufexists(a:buf)
+    return
+  endif
+  if a:msg =~# s:noise
+    return
+  endif
+  call s:AppendOutput(a:buf, [s:Sanitize(a:msg)])
 endfunction
 
 function! vimshell#OnExit(buf, job, status) abort
@@ -538,9 +605,5 @@ function! vimshell#OnExit(buf, job, status) abort
     return
   endif
   call setbufvar(a:buf, 'vimshell_dead', 1)
-  let l:part = s:Sanitize(getbufvar(a:buf, 'vimshell_partial', ''))
-  call setbufvar(a:buf, 'vimshell_partial', '')
-  let l:lines = l:part ==# '' ? [] : [l:part]
-  call add(l:lines, '[vimshell] process exited (code ' . a:status . ')')
-  call s:AppendOutput(a:buf, l:lines)
+  call s:AppendOutput(a:buf, ['[vimshell] process exited (code ' . a:status . ')'])
 endfunction
