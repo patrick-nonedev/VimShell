@@ -96,9 +96,11 @@ g:vimshell_shell          Default: $SHELL (or 'sh')
 
 g:vimshell_prompt         Default: 'vimsh$ '
     Prompt template, expanded once when the shell starts: $PWD (Vim
-    cwd at that moment), $HOME, $USER, $SHELL, $HOSTNAME and their
-    ${...} forms; $$ is a literal $. Anything else is removed so the
-    prompt stays static and recognizable. Single-line only.
+    cwd at that moment), $HOME, $USER, $SHELL, $HOSTNAME, any other
+    $NAME from the environment (missing is removed) and their ${...}
+    forms; $$ is a literal $, a lone $ stays literal. Anything else
+    ($?, $#...) is removed so the prompt stays static and
+    recognizable. Single-line only.
 
 g:vimshell_tui_cmds       Default: editors, pagers, monitors...
     First words that auto-open a terminal region. Prefix anything

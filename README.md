@@ -90,11 +90,13 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 | `$PWD` | Vim cwd at shell start |
 | `$HOME`, `$USER`, `$HOSTNAME` | The usual ones |
 | `$SHELL` | The configured shell |
+| `$NAME` | Any environment variable, expanded once (missing is removed) |
 | `${VAR}` | Braced form |
 | `$$` | Literal `$` |
 
-Anything else (`$?`, `$FOO`...) is removed: the prompt must stay static
-so it can be recognized. Single-line prompts only.
+A lone `$` is literal. Anything else (`$?`, `$#`...) is removed: the
+prompt must stay static so it can be recognized. Single-line prompts
+only.
 
 ## Honest limitations (no pty, no magic)
 
