@@ -376,10 +376,10 @@ function! vimshell#IsTUI(cmd) abort
   return s:IsTUI(a:cmd)
 endfunction
 
-" Run on a real pty for interactive programs. Spawned hidden (a
-" visible spawn stalls while a buffered job runs) and shown at once;
-" long-lived TUIs are alive by then. Closes itself on clean exit, and
-" instantly-finished commands close right away (:q returns to shell).
+" Run on a real pty in a new full-size tab that the app owns.
+" Spawned hidden (a visible spawn stalls while a buffered job runs);
+" instantly-finished commands never open a tab at all. Focus lands in
+" the tab ready to type; :q (from normal mode) comes back.
 function! s:RunInTerminal(cmd) abort
   let l:shell = split(get(g:, 'vimshell_shell', $SHELL))
   if empty(l:shell)
@@ -394,19 +394,25 @@ function! s:RunInTerminal(cmd) abort
   else
     let l:argv = l:shell + ['-c', a:cmd]
   endif
-  let l:tb = term_start(l:argv, {'hidden': 1, 'term_finish': 'close'})
+  try
+    let l:tb = term_start(l:argv, {'hidden': 1, 'term_finish': 'close'})
+  catch
+    echoerr '[vimshell] could not open terminal: ' . v:exception
+    return
+  endtry
   if l:tb <= 0 || !bufexists(l:tb)
     echoerr '[vimshell] could not open terminal'
     return
   endif
-  execute 'belowright ' . get(g:, 'vimshell_term_height', 15) . 'split'
+  if s:TermDead(l:tb)
+    echo '[vimshell] finished too fast to display; instant output belongs in the shell buffer'
+    return
+  endif
+  tabnew
   execute 'buffer ' . l:tb
   call setbufvar(l:tb, 'vimshell_term', 1)
-  if s:TermDead(l:tb)
-    close
-  else
-    call s:EnsureReaper()
-  endif
+  call s:EnsureReaper()
+  silent! startinsert!
 endfunction
 
 " Level-triggered reaper for our terminals: edge events get lost while
@@ -437,7 +443,7 @@ endfunction
 function! s:ReapTerminals(timer) abort
   let l:any = 0
   for l:n in range(1, bufnr('$'))
-    if !getbufvar(l:n, 'vimshell_term', 0)
+    if !bufexists(l:n) || !getbufvar(l:n, 'vimshell_term', 0)
       continue
     endif
     try
@@ -445,16 +451,14 @@ function! s:ReapTerminals(timer) abort
     catch
       let l:dead = 1
     endtry
-    let l:found = 0
-    for l:w in range(1, winnr('$'))
-      if winbufnr(l:w) == l:n
-        let l:found = 1
-        if l:dead && winnr('$') > 1
-          call win_execute(win_getid(l:w), 'close')
-        endif
-      endif
-    endfor
-    if l:dead && !l:found
+    let l:wins = win_findbuf(l:n)
+    if l:dead && !empty(l:wins) && tabpagenr('$') > 1
+      try
+        call win_execute(l:wins[0], 'tabclose')
+      catch
+      endtry
+    endif
+    if l:dead && empty(win_findbuf(l:n))
       call setbufvar(l:n, 'vimshell_term', 0)
     else
       let l:any = 1

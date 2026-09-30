@@ -38,18 +38,13 @@ sends a newline. `exit` kills the shell; `RET` restarts it.
 ## Interactive programs (real tty)
 
 Prefix with `!` (or use a known name like `vim`, `htop`, `less`...) to
-run on a real pty in a split below — a region the app owns, with colors
-and full-screen support:
+run on a real pty in a new full-size tab — a region the app owns, with
+colors and fullscreen support. Focus lands there ready to type.
 
-```vim
-:!vim file.txt
-:!htop
-```
-
-It closes itself on clean exit (`:q` anytime to come back). `!` is for
-long-lived interactive programs; instant output belongs in the shell
-buffer (an instantly-finishing `!cmd` may leave an empty split behind —
-just `:q` it).
+It closes itself on clean exit; otherwise come back with `:q` (from
+normal mode — `CTRL-W N` first if you're typing into the app). `!` is
+for long-lived interactive programs; instant output belongs in the
+shell buffer.
 
 ## Keys (Emacs-like)
 
@@ -86,7 +81,6 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 | `g:vimshell_shell` | `$SHELL` (or `sh`) | Shell to run with `-i` so it loads your rc (`:VimShellShell` changes it at runtime for new buffers) |
 | `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, expanded once when the shell starts |
 | `g:vimshell_tui_cmds` | (editors, pagers, monitors...) | First words that auto-open a terminal (prefix anything else with `!`) |
-| `g:vimshell_term_height` | `15` | Height of the terminal split |
 
 ### Prompt variables
 

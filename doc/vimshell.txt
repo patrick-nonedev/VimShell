@@ -42,10 +42,11 @@ always follows the output.
 Interactive programs (real tty) ~
 
 Prefix with ! (or use a known name like vim, htop, less...) to run on
-a real pty in a split below: a region the app owns, with colors and
-fullscreen support. It closes itself on clean exit (:q anytime to come
-back). Use ! for long-lived interactive programs; instant output
-belongs in the shell buffer.
+a real pty in a new full-size tab: a region the app owns, with colors
+and fullscreen support. Focus lands there ready to type. It closes
+itself on clean exit; otherwise come back with :q (from normal mode,
+CTRL-W N first if typing into the app). Use ! for long-lived
+interactive programs; instant output belongs in the shell buffer.
 
 Completion is Tab-driven: commands on the first word ($PATH plus common
 builtins), paths on the rest (relative, absolute and ~/..., directories
@@ -103,16 +104,13 @@ g:vimshell_tui_cmds       Default: editors, pagers, monitors...
     First words that auto-open a terminal region. Prefix anything
     else with ! yourself.
 
-g:vimshell_term_height    Default: 15
-    Height of the terminal split.
-
 ==============================================================================
 6. LIMITATIONS                                           *vimshell-limitations*
 
 No pty means no magic:
 
 - No interactive programs on the pipe: vim, less, htop, fzf... need
-  a terminal, use !cmd for those (real pty in a split). "clear" works
+  a terminal, use !cmd for those (real pty in a new tab). "clear" works
   (handled by the buffer).
 - fish is unusable as the inferior shell: with piped stdin it reads
   to EOF before executing anything.
