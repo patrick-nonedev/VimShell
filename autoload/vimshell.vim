@@ -736,7 +736,26 @@ function! vimshell#OnOut(buf, channel, msg) abort
   if !bufexists(a:buf)
     return
   endif
-  call s:AppendOutput(a:buf, s:Reassemble(a:buf, 'vimshell_pout', a:msg))
+  let l:lines = s:Reassemble(a:buf, 'vimshell_pout', a:msg)
+  if empty(l:lines)
+    return
+  endif
+  let l:old = len(getbufline(a:buf, 1, '$'))
+  call s:AppendOutput(a:buf, l:lines)
+  call s:FollowToEnd(a:buf, l:old)
+endfunction
+
+" Shell output drags a waiting cursor to the fresh end. Only the
+" current window follows, and only if it was on the last line: a
+" cursor parked up reading old output is left alone. Completion
+" listings use s:AppendOutput directly and never follow.
+function! s:FollowToEnd(buf, old_last) abort
+  if bufnr('') != a:buf || line('.') != a:old_last
+    return
+  endif
+  let l:last = line('$')
+  call cursor(l:last, len(getline(l:last)) + 1)
+  call s:FixModifiable(a:buf)
 endfunction
 
 " stderr carries the shell's own noise; drop the known lines.
@@ -752,7 +771,12 @@ function! vimshell#OnErr(buf, channel, msg) abort
     endif
     call add(l:out, l:line)
   endfor
+  if empty(l:out)
+    return
+  endif
+  let l:old = len(getbufline(a:buf, 1, '$'))
   call s:AppendOutput(a:buf, l:out)
+  call s:FollowToEnd(a:buf, l:old)
 endfunction
 
 " Raw chunks into complete lines (streams kept separate).
@@ -779,5 +803,7 @@ function! vimshell#OnExit(buf, job, status) abort
   endif
   call setbufvar(a:buf, 'vimshell_pout', '')
   call setbufvar(a:buf, 'vimshell_perr', '')
+  let l:old = len(getbufline(a:buf, 1, '$'))
   call s:AppendOutput(a:buf, l:tail + ['[vimshell] process exited (code ' . a:status . ')'])
+  call s:FollowToEnd(a:buf, l:old)
 endfunction
