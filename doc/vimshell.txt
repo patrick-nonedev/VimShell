@@ -15,10 +15,10 @@ CONTENTS                                                    *vimshell-contents*
 1. INTRODUCTION                                         *vimshell-introduction*
 
 VimShell is Emacs shell-mode in Vim: a buffer with ONE persistent shell
-underneath (a job over pipes, no pty). The shell writes straight into
-the buffer; Vim captures no streams. Prompt lines are editable like any
-Vim text, everything else is read-only. What you send is exactly what
-you typed.
+underneath (a job over pipes, no pty). Output flows through plain
+callbacks that append it verbatim; no shell logic lives in Vimscript.
+Prompt lines are editable like any Vim text, everything else is
+read-only. What you send is exactly what you typed.
 
 Typing "exit" kills the shell; pressing <CR> restarts it.
 

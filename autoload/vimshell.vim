@@ -1,7 +1,7 @@
 " vimshell: Emacs shell-mode in Vim.
-" Editable input over one persistent shell job. Output goes straight
-" from the shell to the buffer (out_io=buffer); only the prompt lines
-" are editable, everything else is read-only.
+" Editable input over one persistent shell job. Output travels plain
+" callbacks that append it verbatim; only the prompt lines are
+" editable, everything else is read-only.
 
 let s:prompt_default = 'vimsh$ '
 let s:history_max = 1000
@@ -137,9 +137,11 @@ function! s:StartJob() abort
   call s:Unlock()
   let b:vimshell_job = job_start(l:argv, {
         \ 'in_io': 'pipe',
-        \ 'out_io': 'buffer',
-        \ 'out_buf': bufnr(''),
+        \ 'out_io': 'pipe',
+        \ 'out_mode': 'raw',
+        \ 'out_cb': function('vimshell#OnOut', [bufnr('')]),
         \ 'err_io': 'pipe',
+        \ 'err_mode': 'raw',
         \ 'err_cb': function('vimshell#OnErr', [bufnr('')]),
         \ 'exit_cb': function('vimshell#OnExit', [bufnr('')]),
         \ 'env': {'TERM': 'dumb', 'PAGER': 'cat', 'MANPAGER': 'cat',
@@ -152,10 +154,20 @@ function! s:StartJob() abort
   endif
 endfunction
 
-" Read-only everywhere except empty buffer and prompt lines.
+" Read-only everywhere except: while typing (never lock mid-word),
+" empty lines, and the live prompt (last line). Old prompts lock so
+" you can't silently keep typing on them; go to the fresh one.
 function! vimshell#SyncModifiable() abort
+  if mode(1) =~# '^[iR]'
+    setlocal modifiable
+    return
+  endif
   if getline('.') ==# ''
     setlocal modifiable
+    return
+  endif
+  if line('.') != line('$')
+    setlocal nomodifiable
     return
   endif
   let l:line = getline('.')
@@ -323,17 +335,30 @@ function! s:HistoryGo(dir) abort
   let b:vimshell_history_idx = max([0, min([b:vimshell_history_idx, len(b:vimshell_history)])])
   let l:cmd = b:vimshell_history_idx < len(b:vimshell_history)
         \ ? b:vimshell_history[b:vimshell_history_idx] : ''
-  let l:lnum = s:PromptLine()
+  let l:lnum = s:LivePrompt()
   if l:lnum == 0
     call s:Unlock()
-    call append(line('$'), get(b:, 'vimshell_ps1', '') . l:cmd)
+    call append(line('$'), get(b:, 'vimshell_ps1', ''))
     let l:lnum = line('$')
   else
     call s:Unlock()
-    call setline(l:lnum, get(b:, 'vimshell_ps1', '') . l:cmd)
   endif
+  call setline(l:lnum, get(b:, 'vimshell_ps1', '') . l:cmd)
   call cursor(l:lnum, col('$'))
   call s:FixModifiable(bufnr(''))
+endfunction
+
+" Live prompt line (last line with prefix, or single empty line), else 0.
+function! s:LivePrompt() abort
+  if line('$') == 1 && getline(1) ==# ''
+    return 1
+  endif
+  let l:last = getline('$')
+  let l:ps1 = get(b:, 'vimshell_ps1', '')
+  if l:ps1 !=# '' && strpart(l:last, 0, len(l:ps1)) ==# l:ps1
+    return line('$')
+  endif
+  return 0
 endfunction
 
 function! vimshell#Interrupt() abort
@@ -613,11 +638,16 @@ endfunction
 " <Tab>: commands first, paths after, flags when the fragment starts
 " with -. One candidate replaces; several extend or get listed.
 function! vimshell#Complete() abort
-  let l:lnum = s:PromptLine()
+  let l:prompt = get(b:, 'vimshell_ps1', '')
+  let l:lnum = 0
+  if l:prompt !=# '' && strpart(getline('.'), 0, len(l:prompt)) ==# l:prompt
+    let l:lnum = line('.')
+  else
+    let l:lnum = s:LivePrompt()
+  endif
   if l:lnum == 0
     return ''
   endif
-  let l:prompt = get(b:, 'vimshell_ps1', '')
   let l:input = strpart(getline(l:lnum), len(l:prompt))
   let l:cut = len(l:input)
   if line('.') == l:lnum
@@ -683,26 +713,6 @@ function! vimshell#Complete() abort
   return ''
 endfunction
 
-" Line to complete/recall on: the cursor's own prompt line, else the
-" last line if it is a prompt, else none (0).
-function! s:PromptLine() abort
-  let l:ps1 = get(b:, 'vimshell_ps1', '')
-  if l:ps1 !=# ''
-    let l:cur = getline('.')
-    if strpart(l:cur, 0, len(l:ps1)) ==# l:ps1
-      return line('.')
-    endif
-    if line('$') == 1 && getline(1) ==# ''
-      return 1
-    endif
-    let l:last = getline('$')
-    if strpart(l:last, 0, len(l:ps1)) ==# l:ps1
-      return line('$')
-    endif
-  endif
-  return 0
-endfunction
-
 " No pty means escapes are always garbage.
 function! s:Sanitize(line) abort
   let l:line = substitute(a:line, "\<Esc>\\[[0-9; ?]*[a-zA-Z]", '', 'g')
@@ -722,15 +732,35 @@ function! s:Note(msg) abort
   call s:AppendOutput(bufnr(''), [a:msg])
 endfunction
 
-" stderr mainly carries the shell's own noise; drop the known lines.
+function! vimshell#OnOut(buf, channel, msg) abort
+  if !bufexists(a:buf)
+    return
+  endif
+  call s:AppendOutput(a:buf, s:Reassemble(a:buf, 'vimshell_pout', a:msg))
+endfunction
+
+" stderr carries the shell's own noise; drop the known lines.
 function! vimshell#OnErr(buf, channel, msg) abort
   if !bufexists(a:buf)
     return
   endif
-  if a:msg =~# s:noise
-    return
-  endif
-  call s:AppendOutput(a:buf, [s:Sanitize(a:msg)])
+  let l:out = []
+  for l:line in s:Reassemble(a:buf, 'vimshell_perr', a:msg)
+    let l:line = s:Sanitize(l:line)
+    if l:line =~# s:noise
+      continue
+    endif
+    call add(l:out, l:line)
+  endfor
+  call s:AppendOutput(a:buf, l:out)
+endfunction
+
+" Raw chunks into complete lines (streams kept separate).
+function! s:Reassemble(buf, partkey, msg) abort
+  let l:text = getbufvar(a:buf, a:partkey, '') . a:msg
+  let l:lines = split(l:text, "\n", 1)
+  call setbufvar(a:buf, a:partkey, remove(l:lines, -1))
+  return l:lines
 endfunction
 
 function! vimshell#OnExit(buf, job, status) abort
@@ -738,5 +768,16 @@ function! vimshell#OnExit(buf, job, status) abort
     return
   endif
   call setbufvar(a:buf, 'vimshell_dead', 1)
-  call s:AppendOutput(a:buf, ['[vimshell] process exited (code ' . a:status . ')'])
+  let l:tail = []
+  let l:op = getbufvar(a:buf, 'vimshell_pout', '')
+  if l:op !=# ''
+    call add(l:tail, l:op)
+  endif
+  let l:ep = s:Sanitize(getbufvar(a:buf, 'vimshell_perr', ''))
+  if l:ep !=# '' && l:ep !~# s:noise
+    call add(l:tail, l:ep)
+  endif
+  call setbufvar(a:buf, 'vimshell_pout', '')
+  call setbufvar(a:buf, 'vimshell_perr', '')
+  call s:AppendOutput(a:buf, l:tail + ['[vimshell] process exited (code ' . a:status . ')'])
 endfunction
