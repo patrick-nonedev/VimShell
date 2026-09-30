@@ -217,7 +217,7 @@ function! vimshell#ExecuteLine() abort
   let l:cur = getline('.')
   if l:cur ==# ''
     call s:SendRaw("\n")
-    call cursor(line('$'), col('$'))
+    call cursor(line('$'), len(getline(line('$'))) + 1)
     return
   endif
   let l:prompt = get(b:, 'vimshell_ps1', '')
@@ -230,7 +230,7 @@ function! vimshell#ExecuteLine() abort
   let l:cmd = s:StripPrompt(l:cur)
   if l:cmd ==# ''
     call s:SendRaw("\n")
-    call cursor(line('$'), col('$'))
+    call cursor(line('$'), len(getline(line('$'))) + 1)
     return
   endif
   " !cmd, or a known interactive program, runs on a real pty in a
@@ -282,7 +282,7 @@ function! vimshell#ExecuteLine() abort
     return
   endif
   call s:SendRaw(l:cmd . "\n")
-  call cursor(line('$'), col('$'))
+  call cursor(line('$'), len(getline(line('$'))) + 1)
 endfunction
 
 " Copy old text to a fresh prompt line without executing (Emacs).
@@ -293,14 +293,14 @@ function! s:CopyToPrompt(text) abort
     let l:last = getline('$')
     if l:prompt ==# '' || strpart(l:last, 0, len(l:prompt)) !=# l:prompt
       call append(line('$'), l:prompt . a:text)
-      call cursor(line('$'), col('$'))
+      call cursor(line('$'), len(getline(line('$'))) + 1)
       call s:FixModifiable(bufnr(''))
       silent! startinsert!
       return
     endif
   endif
   call setline(line('$'), l:prompt . a:text)
-  call cursor(line('$'), col('$'))
+  call cursor(line('$'), len(getline(line('$'))) + 1)
   call s:FixModifiable(bufnr(''))
   silent! startinsert!
 endfunction
@@ -344,7 +344,7 @@ function! s:HistoryGo(dir) abort
     call s:Unlock()
   endif
   call setline(l:lnum, get(b:, 'vimshell_ps1', '') . l:cmd)
-  call cursor(l:lnum, col('$'))
+  call cursor(l:lnum, len(getline(l:lnum)) + 1)
   call s:FixModifiable(bufnr(''))
 endfunction
 
