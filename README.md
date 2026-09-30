@@ -80,7 +80,7 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `g:vimshell_shell` | `$SHELL` (or `sh`) | Shell to run with `-i` so it loads your rc (`:VimShellShell` changes it at runtime for new buffers) |
-| `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, expanded once when the shell starts |
+| `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, expanded at shell start and on every plain `cd` so `$PWD` follows you |
 | `g:vimshell_tui_cmds` | (editors, pagers, monitors...) | First words that auto-open a terminal (prefix anything else with `!`) |
 
 ### Prompt variables
@@ -106,9 +106,11 @@ only.
 - **fish doesn't work** as the inferior shell: with piped stdin it reads
   to EOF before executing anything. If your `$SHELL` is fish, VimShell
   warns and falls back to `sh` (override with `g:vimshell_shell`).
-- **The prompt is static**: expanded once at shell start. `cd` still
-  moves Vim too (plain paths), which keeps completion honest, but the
-  printed prompt won't follow.
+- **The prompt follows plain `cd`**: Vim `:cd`s along (keeps
+  completion honest) and the shell reprints with fresh variables; old
+  prompts stay recognized as history. Fancier `cd` (vars, globs,
+  quotes) or a direct `:cd` moves only one side — plain `cd` (or a new
+  buffer) re-syncs.
 - If your rc prints a prompt unconditionally you'll see extra lines:
   guard it with `[ -t 1 ] && PS1=...`.
 

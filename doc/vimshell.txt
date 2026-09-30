@@ -95,7 +95,8 @@ g:vimshell_shell          Default: $SHELL (or 'sh')
         let g:vimshell_shell = 'bash'
 
 g:vimshell_prompt         Default: 'vimsh$ '
-    Prompt template, expanded once when the shell starts: $PWD (Vim
+    Prompt template, expanded when the shell starts and re-expanded
+    on every plain cd (so $PWD follows you): $PWD (Vim
     cwd at that moment), $HOME, $USER, $SHELL, $HOSTNAME, any other
     $NAME from the environment (missing is removed) and their ${...}
     forms; $$ is a literal $, a lone $ stays literal. Anything else
@@ -116,8 +117,9 @@ No pty means no magic:
   (handled by the buffer).
 - fish is unusable as the inferior shell: with piped stdin it reads
   to EOF before executing anything.
-- The prompt is static per session; plain "cd <dir>" still moves Vim
-  too (keeps completion honest) but the printed prompt won't follow.
+- The prompt follows plain "cd <dir>" (Vim moves too, old prompts
+  stay recognized); fancier cd (vars, globs, quotes) or a direct :cd
+  moves only one side until the next plain cd.
 - If your rc prints a prompt unconditionally you will see extra
   lines: guard it with "[ -t 1 ] && PS1=...".
 
