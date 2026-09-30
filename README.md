@@ -35,6 +35,22 @@ Type on a prompt line, `RET` sends it. `RET` on an old line copies it to
 a fresh prompt instead of executing (like Emacs). `RET` on empty input
 sends a newline. `exit` kills the shell; `RET` restarts it.
 
+## Interactive programs (real tty)
+
+Prefix with `!` (or use a known name like `vim`, `htop`, `less`...) to
+run on a real pty in a split below — a region the app owns, with colors
+and full-screen support:
+
+```vim
+:!vim file.txt
+:!htop
+```
+
+It closes itself on clean exit (`:q` anytime to come back). `!` is for
+long-lived interactive programs; instant output belongs in the shell
+buffer (an instantly-finishing `!cmd` may leave an empty split behind —
+just `:q` it).
+
 ## Keys (Emacs-like)
 
 | Key | Action |
@@ -69,6 +85,8 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 |----------|---------|-------------|
 | `g:vimshell_shell` | `$SHELL` (or `sh`) | Shell to run with `-i` so it loads your rc (`:VimShellShell` changes it at runtime for new buffers) |
 | `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, expanded once when the shell starts |
+| `g:vimshell_tui_cmds` | (editors, pagers, monitors...) | First words that auto-open a terminal (prefix anything else with `!`) |
+| `g:vimshell_term_height` | `15` | Height of the terminal split |
 
 ### Prompt variables
 
@@ -85,9 +103,9 @@ so it can be recognized. Single-line prompts only.
 
 ## Honest limitations (no pty, no magic)
 
-- **No interactive programs**: `vim`, `less`, `htop`, `fzf`... need a
-  terminal. Use `:terminal` for those. `clear` works (handled by the
-  buffer).
+- **No interactive programs on the pipe**: `vim`, `less`, `htop`,
+  `fzf`... need a terminal — use `!cmd` (real pty in a split below).
+  `clear` works (handled by the buffer).
 - **fish doesn't work** as the inferior shell: with piped stdin it reads
   to EOF before executing anything. If your `$SHELL` is fish, VimShell
   warns and falls back to `sh` (override with `g:vimshell_shell`).

@@ -154,7 +154,7 @@ endfunction
 
 " Read-only everywhere except empty buffer and prompt lines.
 function! vimshell#SyncModifiable() abort
-  if line('$') == 1 && getline(1) ==# ''
+  if getline('.') ==# ''
     setlocal modifiable
     return
   endif
@@ -205,6 +205,7 @@ function! vimshell#ExecuteLine() abort
   let l:cur = getline('.')
   if l:cur ==# ''
     call s:SendRaw("\n")
+    call cursor(line('$'), col('$'))
     return
   endif
   let l:prompt = get(b:, 'vimshell_ps1', '')
@@ -217,6 +218,27 @@ function! vimshell#ExecuteLine() abort
   let l:cmd = s:StripPrompt(l:cur)
   if l:cmd ==# ''
     call s:SendRaw("\n")
+    call cursor(line('$'), col('$'))
+    return
+  endif
+  " !cmd, or a known interactive program, runs on a real pty in a
+  " split below (region) instead of the dumb pipe.
+  let l:typed = l:cmd
+  if l:cmd =~# '^\s*!'
+    let l:cmd = substitute(l:cmd, '^\s*!\s*', '', '')
+    if l:cmd ==# ''
+      return
+    endif
+  elseif !s:IsTUI(l:cmd)
+    let l:typed = ''
+  endif
+  if l:typed !=# ''
+    call add(b:vimshell_history, l:typed)
+    if len(b:vimshell_history) > s:history_max
+      call remove(b:vimshell_history, 0)
+    endif
+    let b:vimshell_history_idx = len(b:vimshell_history)
+    call s:RunInTerminal(l:cmd)
     return
   endif
   " clear is buffer business (TERM=dumb has no escapes).
@@ -248,6 +270,7 @@ function! vimshell#ExecuteLine() abort
     return
   endif
   call s:SendRaw(l:cmd . "\n")
+  call cursor(line('$'), col('$'))
 endfunction
 
 " Copy old text to a fresh prompt line without executing (Emacs).
@@ -335,6 +358,112 @@ function! vimshell#ClearScreen() abort
   call cursor(1, 1)
   call s:FixModifiable(bufnr(''))
   silent! startinsert!
+  " Summon a fresh prompt like a real clear does.
+  if !get(b:, 'vimshell_dead', 0) && exists('b:vimshell_job') && job_status(b:vimshell_job) ==# 'run'
+    call s:SendRaw("\n")
+  endif
+endfunction
+
+let s:tui_default = ['vim', 'nvim', 'vi', 'ex', 'view', 'emacs', 'nano', 'pico', 'micro', 'helix', 'hx', 'kak', 'less', 'more', 'most', 'man', 'htop', 'top', 'btop', 'atop', 'tmux', 'screen', 'zellij', 'tig', 'fzf', 'ranger', 'mc', 'vifm', 'nnn', 'ssh', 'mosh']
+
+" First word against the interactive list (or force with !cmd).
+function! s:IsTUI(cmd) abort
+  let l:first = matchstr(a:cmd, '^\s*\zs\S\+')
+  return index(get(g:, 'vimshell_tui_cmds', s:tui_default), l:first) >= 0
+endfunction
+
+function! vimshell#IsTUI(cmd) abort
+  return s:IsTUI(a:cmd)
+endfunction
+
+" Run on a real pty for interactive programs. Spawned hidden (a
+" visible spawn stalls while a buffered job runs) and shown at once;
+" long-lived TUIs are alive by then. Closes itself on clean exit, and
+" instantly-finished commands close right away (:q returns to shell).
+function! s:RunInTerminal(cmd) abort
+  let l:shell = split(get(g:, 'vimshell_shell', $SHELL))
+  if empty(l:shell)
+    let l:shell = ['sh']
+  endif
+  if !executable(l:shell[0])
+    echoerr '[vimshell] shell not found: ' . join(l:shell)
+    return
+  endif
+  if resolve(exepath(l:shell[0])) =~# 'bash'
+    let l:argv = l:shell + ['-i', '-c', a:cmd]
+  else
+    let l:argv = l:shell + ['-c', a:cmd]
+  endif
+  let l:tb = term_start(l:argv, {'hidden': 1, 'term_finish': 'close'})
+  if l:tb <= 0 || !bufexists(l:tb)
+    echoerr '[vimshell] could not open terminal'
+    return
+  endif
+  execute 'belowright ' . get(g:, 'vimshell_term_height', 15) . 'split'
+  execute 'buffer ' . l:tb
+  call setbufvar(l:tb, 'vimshell_term', 1)
+  if s:TermDead(l:tb)
+    close
+  else
+    call s:EnsureReaper()
+  endif
+endfunction
+
+" Level-triggered reaper for our terminals: edge events get lost while
+" a buffered job runs, so poll every 2s instead. Death is verified
+" against the OS (/proc), not Vim's bookkeeping, which can wedge.
+" Stops when none left.
+function! s:EnsureReaper() abort
+  if !exists('s:reaper') || s:reaper < 0
+    let s:reaper = timer_start(2000, function('s:ReapTerminals'), {'repeat': -1})
+  endif
+endfunction
+
+function! s:TermDead(tb) abort
+  try
+    let l:job = term_getjob(a:tb)
+    if job_status(l:job) !=# 'run'
+      return 1
+    endif
+    if isdirectory('/proc')
+      let l:pid = get(job_info(l:job), 'process', 0)
+      return l:pid > 0 && !isdirectory('/proc/' .. l:pid)
+    endif
+  catch
+  endtry
+  return 0
+endfunction
+
+function! s:ReapTerminals(timer) abort
+  let l:any = 0
+  for l:n in range(1, bufnr('$'))
+    if !getbufvar(l:n, 'vimshell_term', 0)
+      continue
+    endif
+    try
+      let l:dead = s:TermDead(l:n)
+    catch
+      let l:dead = 1
+    endtry
+    let l:found = 0
+    for l:w in range(1, winnr('$'))
+      if winbufnr(l:w) == l:n
+        let l:found = 1
+        if l:dead && winnr('$') > 1
+          call win_execute(win_getid(l:w), 'close')
+        endif
+      endif
+    endfor
+    if l:dead && !l:found
+      call setbufvar(l:n, 'vimshell_term', 0)
+    else
+      let l:any = 1
+    endif
+  endfor
+  if !l:any
+    call timer_stop(a:timer)
+    let s:reaper = -1
+  endif
 endfunction
 
 function! vimshell#SetShell(shell) abort
