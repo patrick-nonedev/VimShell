@@ -44,6 +44,7 @@ function! s:SetupBuffer() abort
   let b:vimshell_history_idx = 0
   let b:vimshell_dead = 0
   let b:vimshell_ps1 = ''
+  let b:vimshell_old_ps1 = []
   let b:vimshell_last_list = ''
   nnoremap <buffer> <CR> :call vimshell#ExecuteLine()<CR>
   inoremap <buffer> <CR> <C-o>:call vimshell#ExecuteLine()<CR>
@@ -105,8 +106,18 @@ endfunction
 function! s:DefinePromptSyntax() abort
   silent! syntax clear vimshellPrompt
   silent! syntax clear vimshellCont
-  execute 'syntax match vimshellPrompt /^\V' . escape(b:vimshell_ps1, '/\') . '/'
+  for l:pr in s:KnownPrompts()
+    execute 'syntax match vimshellPrompt /^\V' . escape(l:pr, '/\') . '/'
+  endfor
   execute 'syntax match vimshellCont /^\V' . escape(s:ps2, '/\') . '/'
+endfunction
+
+" Known prompt prefixes: the live one plus retired ones from directory
+" changes, so history lines keep matching after cd.
+function! s:KnownPrompts() abort
+  let l:known = copy(get(b:, 'vimshell_old_ps1', []))
+  call add(l:known, get(b:, 'vimshell_ps1', ''))
+  return filter(l:known, 'v:val !=# ""')
 endfunction
 
 function! s:ShellArgv() abort
@@ -127,12 +138,28 @@ function! s:ShellArgv() abort
   " -i loads the rc file. bash needs --noediting: it uses readline
   " even on pipes (stderr echo and dangerous TABs). Matched on the
   " resolved binary (sh is often a symlink).
-  if resolve(exepath(l:argv[0])) =~# 'bash'
+  if s:IsBashArgv(l:argv)
     let l:argv += ['--noediting', '-i']
   else
     let l:argv += ['-i']
   endif
   return l:argv
+endfunction
+
+" True when the configured shell resolves to bash.
+function! s:IsBashArgv(argv) abort
+  return !empty(a:argv) && resolve(exepath(a:argv[0])) =~# 'bash'
+endfunction
+
+function! s:IsBash() abort
+  let l:argv = split(get(g:, 'vimshell_shell', $SHELL))
+  if empty(l:argv)
+    let l:argv = ['sh']
+  endif
+  if l:argv[0] =~# 'fish$'
+    let l:argv = ['sh']
+  endif
+  return s:IsBashArgv(l:argv)
 endfunction
 
 function! s:StartJob() abort
@@ -207,9 +234,14 @@ function! s:FixModifiable(buf) abort
 endfunction
 
 function! s:StripPrompt(line) abort
-  let l:ps1 = get(b:, 'vimshell_ps1', '')
-  if l:ps1 !=# '' && strpart(a:line, 0, len(l:ps1)) ==# l:ps1
-    return strpart(a:line, len(l:ps1))
+  let l:best = ''
+  for l:pr in s:KnownPrompts()
+    if strpart(a:line, 0, len(l:pr)) ==# l:pr && len(l:pr) > len(l:best)
+      let l:best = l:pr
+    endif
+  endfor
+  if l:best !=# ''
+    return strpart(a:line, len(l:best))
   endif
   if strpart(a:line, 0, len(s:ps2)) ==# s:ps2
     return strpart(a:line, len(s:ps2))
@@ -234,7 +266,7 @@ function! vimshell#ExecuteLine() abort
   let l:prompt = get(b:, 'vimshell_ps1', '')
   if l:prompt ==# '' || strpart(l:cur, 0, len(l:prompt)) !=# l:prompt
     if strpart(l:cur, 0, len(s:ps2)) !=# s:ps2
-      call s:CopyToPrompt(l:cur)
+      call s:CopyToPrompt(s:StripPrompt(l:cur))
       return
     endif
   endif
@@ -276,14 +308,19 @@ function! vimshell#ExecuteLine() abort
   let b:vimshell_history_idx = len(b:vimshell_history)
   " Plain `cd <dir>` also :cds so $PWD-based completion stays truthful.
   " Anything fancier (vars, globs, quotes) moves only the shell.
+  let l:cd_moved = 0
   if l:cmd =~# '^\s*cd\s*$'
     execute 'cd ' . fnameescape($HOME)
+    call s:RefreshPrompt()
+    let l:cd_moved = 1
   else
     let l:cdarg = matchstr(l:cmd, '^\s*cd\s\+\zs[^ \t;|&]\+')
     if l:cdarg !=# '' && l:cdarg !~# '[$`"''*?{}\\!]'
       let l:cdarg = substitute(l:cdarg, '^\~', $HOME, '')
       if isdirectory(l:cdarg)
         execute 'cd ' . fnameescape(l:cdarg)
+        call s:RefreshPrompt()
+        let l:cd_moved = 1
       endif
     endif
   endif
@@ -292,7 +329,19 @@ function! vimshell#ExecuteLine() abort
     call s:Note('[vimshell] process is not running')
     return
   endif
-  call s:SendRaw(l:cmd . "\n")
+  if l:cd_moved
+    " Push the refreshed PS1 with the cd: one silent line, one prompt,
+    " still ending with newline so it flushes as a complete line like
+    " in StartJob. printf -v keeps quoting trivial (no nesting) on
+    " bash; other shells use eval+printf (less robust over pipes).
+    if s:IsBash()
+      call s:SendRaw('printf -v PS1 ''%s\n'' ' . shellescape(b:vimshell_ps1) . '; ' . l:cmd . "\n")
+    else
+      call s:SendRaw('eval "$(printf "PS1=''%s\n''" ' . shellescape(b:vimshell_ps1) . '); ' . l:cmd . "\n")
+    endif
+  else
+    call s:SendRaw(l:cmd . "\n")
+  endif
   call cursor(line('$'), len(getline(line('$'))) + 1)
 endfunction
 
@@ -314,6 +363,25 @@ function! s:CopyToPrompt(text) abort
   call cursor(line('$'), len(getline(line('$'))) + 1)
   call s:FixModifiable(bufnr(''))
   silent! startinsert!
+endfunction
+
+" Re-expand the prompt after Vim's cwd changed (typed cd). Retired
+" prompts stay recognized for history lines. The caller pushes the new
+" PS1 to the shell together with the cd, so it prints a single prompt.
+function! s:RefreshPrompt() abort
+  let l:new = s:ExpandPrompt()
+  if l:new ==# get(b:, 'vimshell_ps1', '')
+    return
+  endif
+  if !exists('b:vimshell_old_ps1')
+    let b:vimshell_old_ps1 = []
+  endif
+  call add(b:vimshell_old_ps1, b:vimshell_ps1)
+  if len(b:vimshell_old_ps1) > 20
+    call remove(b:vimshell_old_ps1, 0, len(b:vimshell_old_ps1) - 21)
+  endif
+  let b:vimshell_ps1 = l:new
+  call s:DefinePromptSyntax()
 endfunction
 
 function! s:SendRaw(text) abort
