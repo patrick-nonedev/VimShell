@@ -69,8 +69,16 @@ function! s:Prompt() abort
   return get(g:, 'vimshell_prompt', s:prompt_default)
 endfunction
 
-" Expanded prompt for PS1. Unknown $vars are removed: a dynamic PS1
-" would break prefix matching, so only the documented ones survive.
+" Expanded prompt for PS1. Documented $vars first, then any other
+" $NAME / ${NAME} from the environment (once, so it stays static);
+" leftovers ($?, $# unsets...) are removed: a dynamic PS1 would break
+" prefix matching. A lone $ is literal.
+" getenv() yields "" (Vim) or v:null (Neovim) when missing; both mean
+" removed here.
+function! s:Env(name) abort
+  let l:v = getenv(a:name)
+  return type(l:v) == type('') ? l:v : ''
+endfunction
 function! s:ExpandPrompt() abort
   let l:p = substitute(s:Prompt(), '\$\$', "\x01", 'g')
   let l:shell = split(get(g:, 'vimshell_shell', $SHELL))
@@ -81,8 +89,11 @@ function! s:ExpandPrompt() abort
     let l:p = substitute(l:p, '\${' . l:k . '}', '\=' . string(l:v), 'g')
     let l:p = substitute(l:p, '\$' . l:k . '\>', '\=' . string(l:v), 'g')
   endfor
-  let l:p = substitute(l:p, '\${\w\+}', '', 'g')
+  let l:p = substitute(l:p, '\${\([A-Za-z_][A-Za-z0-9_]*\)}', '\=s:Env(submatch(1))', 'g')
+  let l:p = substitute(l:p, '\$\([A-Za-z_][A-Za-z0-9_]*\)\>', '\=s:Env(submatch(1))', 'g')
+  let l:p = substitute(l:p, '\${[^}]*}', '', 'g')
   let l:p = substitute(l:p, '\$\w\+', '', 'g')
+  let l:p = substitute(l:p, '\$[!?#$*@0-9(-]', '', 'g')
   return substitute(l:p, "\x01", '$', 'g')
 endfunction
 
