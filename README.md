@@ -3,10 +3,11 @@
 Emacs shell-mode in Vim: a normal buffer with **one persistent shell
 underneath** (a job over pipes, no pty).
 
-The shell writes straight into the buffer (Vim routes its stdout there;
-nothing is captured or reimplemented). You type on the prompt lines,
-which are editable like any Vim text; everything else is read-only.
-What you send is exactly what you typed — no magic.
+Output flows through plain callbacks that append it verbatim — no
+shell logic is reimplemented anywhere (Vim's native buffer-append was
+observed dropping data, so bytes travel the explicit path). You type
+on the prompt lines, which are editable like any Vim text; everything
+else is read-only. What you send is exactly what you typed — no magic.
 
 ## Requirements
 
