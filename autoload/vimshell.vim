@@ -39,7 +39,7 @@ function! s:SetupBuffer() abort
   setlocal buftype=nofile bufhidden=hide noswapfile nobuflisted
   setlocal filetype=vimshell
   setlocal nowrap nonumber norelativenumber nocursorline nolist
-  setlocal nomodifiable
+  setlocal modifiable
   let b:vimshell_history = []
   let b:vimshell_history_idx = 0
   let b:vimshell_dead = 0
@@ -192,33 +192,9 @@ function! s:StartJob() abort
   endif
 endfunction
 
-" Read-only everywhere except: while typing (never lock mid-word),
-" empty lines, and the live prompt (last line). Old prompts lock so
-" you can't silently keep typing on them; go to the fresh one.
+" The buffer is always editable: no locking old prompts or any region.
 function! vimshell#SyncModifiable() abort
-  if mode(1) =~# '^[iR]'
-    setlocal modifiable
-    return
-  endif
-  if getline('.') ==# ''
-    setlocal modifiable
-    return
-  endif
-  if line('.') != line('$')
-    setlocal nomodifiable
-    return
-  endif
-  let l:line = getline('.')
-  let l:ps1 = get(b:, 'vimshell_ps1', '')
-  if l:ps1 !=# '' && strpart(l:line, 0, len(l:ps1)) ==# l:ps1
-    setlocal modifiable
-    return
-  endif
-  if strpart(l:line, 0, len(s:ps2)) ==# s:ps2
-    setlocal modifiable
-    return
-  endif
-  setlocal nomodifiable
+  setlocal modifiable
 endfunction
 
 function! s:Unlock() abort
@@ -226,11 +202,7 @@ function! s:Unlock() abort
 endfunction
 
 function! s:FixModifiable(buf) abort
-  if bufnr('') == a:buf
-    call vimshell#SyncModifiable()
-  else
-    call setbufvar(a:buf, '&modifiable', 0)
-  endif
+  call setbufvar(a:buf, '&modifiable', 1)
 endfunction
 
 function! s:StripPrompt(line) abort
