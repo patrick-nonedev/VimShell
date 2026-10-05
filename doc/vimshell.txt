@@ -71,7 +71,15 @@ comments, numbers, operators, flags, suspicious errors).
 :VimShellSplit     Open VimShell in a horizontal split.
 :VimShellVSplit    Open VimShell in a vertical split.
 :VimShellShell {shell}
-                 Use another shell for new buffers.
+                  Use another shell for new buffers.
+:LdShell {cmd}     Run a shell-environment loader (nix-shell, direnv,
+                  ...) and merge the environment it ends up with into
+                  Vim. Nothing is removed: new names are added, colon
+                  lists (PATH, PYTHONPATH...) are unioned keeping the
+                  current order first, and every live VimShell session
+                  gets the same exports so the shell under the prompt
+                  agrees with Vim. Quoting is ordinary shell quoting.
+                  PWD, OLDPWD, SHLVL, _ and TERM are left alone.
 
 ==============================================================================
 4. MAPPINGS                                                 *vimshell-mappings*
