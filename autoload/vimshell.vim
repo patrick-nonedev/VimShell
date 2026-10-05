@@ -614,6 +614,21 @@ function! s:ReadFlags(cmd) abort
   return sort(keys(l:found))
 endfunction
 
+function! s:Unescape(s) abort
+  let l:out = ''
+  let l:i = 0
+  while l:i < strlen(a:s)
+    if a:s[l:i] ==# '\' && l:i + 1 < strlen(a:s)
+      let l:out .= a:s[l:i + 1]
+      let l:i += 2
+      continue
+    endif
+    let l:out .= a:s[l:i]
+    let l:i += 1
+  endwhile
+  return l:out
+endfunction
+
 function! s:CompletePath(frag) abort
   if a:frag ==# ''
     let l:exp = ''
@@ -686,6 +701,39 @@ function! s:CommonPrefix(items) abort
   return l:p
 endfunction
 
+" Backslash-escape the shell metacharacters in a real filename. Slashes stay
+" readable (dirs keep their trailing /) and quotes stay outside, so the text
+" can be extended by the next <Tab> and read while typing.
+function! s:Escape(name, space) abort
+  if a:name ==# ''
+    return ''
+  endif
+  let l:out = escape(a:name, " \t\n*?[]{}()<>|&;$`'\"\\!#~")
+  return l:out . (a:space ? ' ' : '')
+endfunction
+
+" Word around byte offset {cut}, where a backslash escapes the next char.
+" Returns [start, end] so a path with spaces stays one word across <Tab>s.
+function! s:WordBounds(s, cut) abort
+  let l:bs = repeat([0], strlen(a:s) + 1)
+  let l:pending = 0
+  let l:i = 0
+  while l:i < strlen(a:s)
+    let l:bs[l:i] = l:pending
+    let l:pending = (a:s[l:i] ==# '\' && !l:pending)
+    let l:i += 1
+  endwhile
+  let l:ts = a:cut
+  while l:ts > 0 && !(strpart(a:s, l:ts - 1, 1) =~# '\s' && !l:bs[l:ts - 1])
+    let l:ts -= 1
+  endwhile
+  let l:te = a:cut
+  while l:te < strlen(a:s) && !(strpart(a:s, l:te, 1) =~# '\s' && !l:bs[l:te])
+    let l:te += 1
+  endwhile
+  return [l:ts, l:te]
+endfunction
+
 " <Tab>: commands first, paths after, flags when the fragment starts
 " with -. One candidate replaces; several extend or get listed.
 function! vimshell#Complete() abort
@@ -704,16 +752,7 @@ function! vimshell#Complete() abort
   if line('.') == l:lnum
     let l:cut = max([0, min([col('.') - 1 - len(l:prompt), len(l:input)])])
   endif
-  let l:ts = l:cut
-  if !(l:cut < len(l:input) && strpart(l:input, l:cut, 1) =~# '\s')
-    while l:ts > 0 && strpart(l:input, l:ts - 1, 1) !~# '\s'
-      let l:ts -= 1
-    endwhile
-  endif
-  let l:te = l:cut
-  while l:te < len(l:input) && strpart(l:input, l:te, 1) !~# '\s'
-    let l:te += 1
-  endwhile
+  let [l:ts, l:te] = s:WordBounds(l:input, l:cut)
   let l:head = strpart(l:input, 0, l:ts)
   let l:frag = strpart(l:input, l:ts, l:te - l:ts)
   let l:after = strpart(l:input, l:te)
@@ -723,24 +762,33 @@ function! vimshell#Complete() abort
     endif
     let l:cands = filter(s:PathCommands() + s:builtins, 'strpart(v:val, 0, len(l:frag)) ==# l:frag')
     let l:space = 1
+    let l:esc = 0
   else
     if l:frag =~# '^-'
       let l:cmd = matchstr(l:head . l:frag, '^\s*\zs\S\+')
       " copy(): filter() would mutate the cached list.
       let l:cands = filter(copy(s:CommandFlags(l:cmd)), 'strpart(v:val, 0, len(l:frag)) ==# l:frag')
       let l:space = 1
+      let l:esc = 0
     else
-      let l:cands = s:CompletePath(l:frag)
+      " Match against the real names, not the typed backslashes.
+      let l:cands = s:CompletePath(s:Unescape(l:frag))
       let l:space = 0
+      let l:esc = 1
     endif
   endif
   if empty(l:cands)
     return ''
   endif
+  " Escape the inserted text once the match is accepted: real names go in,
+  " so a space or quote in the filename would break the command otherwise.
   if len(l:cands) == 1
-    let l:pick = l:cands[0] . (l:space ? ' ' : '')
+    let l:pick = l:esc ? s:Escape(l:cands[0], l:space) : l:cands[0] . (l:space ? ' ' : '')
+    if l:pick ==# l:frag
+      return ''
+    endif
   else
-    let l:pick = s:CommonPrefix(l:cands)
+    let l:pick = l:esc ? s:Escape(s:CommonPrefix(l:cands), 0) : s:CommonPrefix(l:cands)
     if l:pick ==# l:frag
       " List in the buffer below the prompt, keeping typed text; skip
       " repeats so double-Tab doesn't pile up.
