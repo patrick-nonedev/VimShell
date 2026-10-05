@@ -63,7 +63,9 @@ One `<Tab>` candidate replaces the fragment (commands and flags with a
 trailing space, directories with `/`); several extend the common prefix
 or get listed **right in the buffer** without touching what you typed.
 Flags come from `--help` (cached per command). Works mid-line: it
-completes the whole token under the cursor. Anything else is Vim's
+completes the whole token under the cursor. Completed paths come back
+escaped (`my\ dir/a\ file.txt`), so they run as typed, and `<Tab>`
+keeps descending inside them. Anything else is Vim's
 native completion on editable text (`CTRL-X CTRL-F`, `CTRL-N`...).
 
 The buffer has shell highlighting (prompt, strings, `$variables`,

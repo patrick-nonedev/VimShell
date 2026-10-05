@@ -53,7 +53,10 @@ builtins), paths on the rest (relative, absolute and ~/..., directories
 with trailing /), flags of the command when the fragment starts with -
 (from --help, cached per command). One candidate replaces the fragment;
 several extend the common prefix or get listed right in the buffer,
-without touching what you typed. Anything else is Vim's native
+without touching what you typed. Completed paths arrive escaped
+(space, quotes, $, ... become \space, \', \$), so the command runs
+as typed; the escapes stay part of the word, so <Tab> again keeps
+descending into a directory with spaces. Anything else is Vim's native
 completion on editable text (i_CTRL-X_CTRL-F for files, i_CTRL-N for
 words...).
 
