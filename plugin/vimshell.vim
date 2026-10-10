@@ -11,7 +11,7 @@ command! -nargs=0 VimShellOpen   call vimshell#Open('new')
 command! -nargs=0 VimShellSplit  call vimshell#Open('split')
 command! -nargs=0 VimShellVSplit call vimshell#Open('vsplit')
 command! -nargs=1 VimShellShell   call vimshell#SetShell(<q-args>)
-command! -nargs=+ -complete=shellcmd LdShell call vimshell#LdShell(<q-args>)
+
 
 let &cpo = s:save_cpo
 unlet s:save_cpo

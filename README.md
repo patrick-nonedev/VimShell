@@ -48,32 +48,6 @@ normal mode — `CTRL-W N` first if you're typing into the app). `!` is
 for long-lived interactive programs; instant output belongs in the
 shell buffer.
 
-## Loading a shell environment (`:LdShell`)
-
-```vim
-:LdShell nix-shell
-:LdShell 'nix-shell --run "true"'
-:LdShell direnv allow . && nix-shell
-```
-
-Runs the command (an environment loader: `nix-shell`, `direnv`,
-`conda activate`, `source activate venv`...) and merges the environment
-it ends up with into Vim. Nothing is ever removed:
-
-- new variables are added, existing ones updated;
-- colon lists (`PATH`, `PYTHONPATH`, `MANPATH`...) are unioned, current
-  entries first, duplicates dropped — your paths keep working and the
-  new ones are appended;
-- every live VimShell session receives the same `export`s, so the shell
-  under the prompt agrees with Vim, and sessions opened later inherit
-  the merged environment;
-- `PWD`, `OLDPWD`, `SHLVL`, `_` and `TERM` are left alone: they belong
-  to the running process, not to a loaded environment.
-
-Quoting is ordinary shell quoting. The dump is asynchronous (Vim stays
-usable) and a loader that fails is reported with its own message; what
-it did set still lands.
-
 ## Keys (Emacs-like)
 
 | Key | Action |
