@@ -7,6 +7,11 @@ let s:prompt_default = 'vimsh$ '
 let s:history_max = 1000
 let s:ps2 = '> '
 let s:noise = 'terminal process group\|grupo de proceso de terminal\|no job control in this shell\|no hay control de trabajos en este shell'
+" The prompt carries a sentinel in front of it, so the end of a
+" command's output is marked in the stream itself. Text before the
+" sentinel is finished even when it has no trailing newline, and the
+" other stream's leftovers are finished as well.
+let s:sentinel = "\x1evimshell-prompt\x1e"
 
 function! vimshell#Open(kind) abort
   if !has('job') || !has('channel')
@@ -170,8 +175,9 @@ function! s:StartJob() abort
     return
   endif
   " PS1 ends with newline so prompts flush as complete lines instead
-  " of merging with the next output line.
-  let l:ps1 = b:vimshell_ps1 . (b:vimshell_ps1 =~# '\n$' ? '' : "\n")
+  " of merging with the next output line. The sentinel in front marks
+  " where the previous command's output ended.
+  let l:ps1 = s:sentinel . b:vimshell_ps1 . (b:vimshell_ps1 =~# '\n$' ? '' : "\n")
   call s:Unlock()
   let b:vimshell_job = job_start(l:argv, {
         \ 'in_io': 'pipe',
@@ -307,9 +313,9 @@ function! vimshell#ExecuteLine() abort
     " in StartJob. printf -v keeps quoting trivial (no nesting) on
     " bash; other shells use eval+printf (less robust over pipes).
     if s:IsBash()
-      call s:SendRaw('printf -v PS1 ''%s\n'' ' . shellescape(b:vimshell_ps1) . '; ' . l:cmd . "\n")
+      call s:SendRaw('printf -v PS1 ''%s\n'' ' . shellescape(s:sentinel . b:vimshell_ps1) . '; ' . l:cmd . "\n")
     else
-      call s:SendRaw('eval "$(printf "PS1=''%s\n''" ' . shellescape(b:vimshell_ps1) . '); ' . l:cmd . "\n")
+      call s:SendRaw('eval "$(printf "PS1=''%s\n''" ' . shellescape(s:sentinel . b:vimshell_ps1) . '); ' . l:cmd . "\n")
     endif
   else
     call s:SendRaw(l:cmd . "\n")
@@ -836,12 +842,12 @@ function! vimshell#OnOut(buf, channel, msg) abort
   if !bufexists(a:buf)
     return
   endif
-  let l:lines = s:Reassemble(a:buf, 'vimshell_pout', a:msg)
-  if empty(l:lines)
+  let [l:lines, l:flushed] = s:Reassemble(a:buf, 'vimshell_pout', a:msg)
+  if empty(l:lines) && empty(l:flushed)
     return
   endif
   let l:old = len(getbufline(a:buf, 1, '$'))
-  call s:AppendOutput(a:buf, l:lines)
+  call s:AppendOutput(a:buf, l:flushed + l:lines)
   call s:FollowToEnd(a:buf, l:old)
 endfunction
 
@@ -863,8 +869,9 @@ function! vimshell#OnErr(buf, channel, msg) abort
   if !bufexists(a:buf)
     return
   endif
+  let [l:lines, l:flushed] = s:Reassemble(a:buf, 'vimshell_perr', a:msg)
   let l:out = []
-  for l:line in s:Reassemble(a:buf, 'vimshell_perr', a:msg)
+  for l:line in l:flushed + l:lines
     let l:line = s:Sanitize(l:line)
     if l:line =~# s:noise
       continue
@@ -880,11 +887,49 @@ function! vimshell#OnErr(buf, channel, msg) abort
 endfunction
 
 " Raw chunks into complete lines (streams kept separate).
+"
+" The sentinel in the prompt marks the end of a command's output: what
+" came before it is finished even without a trailing newline (so
+" "printf abc" is shown instead of waiting for a newline that never
+" comes), and the other stream's pending text is finished too.
+"
+" Returns [lines, flushed]: the lines of this stream, and the pending
+" text of the other one, closed by the sentinel.
 function! s:Reassemble(buf, partkey, msg) abort
   let l:text = getbufvar(a:buf, a:partkey, '') . a:msg
-  let l:lines = split(l:text, "\n", 1)
-  call setbufvar(a:buf, a:partkey, remove(l:lines, -1))
-  return l:lines
+  let l:lines = []
+  let l:flushed = []
+  let l:pos = stridx(l:text, s:sentinel)
+  if l:pos >= 0
+    " Output finished before the sentinel: all of it is complete.
+    let l:head = strpart(l:text, 0, l:pos)
+    let l:text = strpart(l:text, l:pos + len(s:sentinel))
+    if l:head !=# ''
+      let l:head_lines = split(l:head, "\n", 1)
+      if l:head_lines[-1] ==# ''
+        call remove(l:head_lines, -1)
+      endif
+      call extend(l:lines, l:head_lines)
+    endif
+    let l:flushed = s:FlushOther(a:buf, a:partkey)
+  endif
+  let l:rest = split(l:text, "\n", 1)
+  call setbufvar(a:buf, a:partkey, remove(l:rest, -1))
+  call extend(l:lines, l:rest)
+  return [l:lines, l:flushed]
+endfunction
+
+" The other stream's pending text is complete once a prompt arrives:
+" the command that produced it is over. Returned as its own line, even
+" without a trailing newline.
+function! s:FlushOther(buf, partkey) abort
+  let l:other = a:partkey ==# 'vimshell_pout' ? 'vimshell_perr' : 'vimshell_pout'
+  let l:pending = getbufvar(a:buf, l:other, '')
+  if l:pending ==# ''
+    return []
+  endif
+  call setbufvar(a:buf, l:other, '')
+  return [l:pending]
 endfunction
 
 function! vimshell#OnExit(buf, job, status) abort
