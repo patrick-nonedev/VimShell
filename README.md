@@ -83,7 +83,7 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `g:vimshell_shell` | `$SHELL` (or `sh`) | Shell to run with `-i` so it loads your rc (`:vshellShell` changes it at runtime for new buffers) |
-| `g:vimshell_prompt` | `'vimsh$ '` | Prompt template, expanded at shell start and on every plain `cd` so `$PWD` follows you |
+| `g:vimshell_prompt` | `'vimsh$ '` | Prompt template: `$VAR` expansion or shell commands (`pwd \| sed ...`). Evaluated at shell start and on every plain `cd` |
 | `g:vimshell_rc` | (empty) | Path to a shell script sourced after the shell starts (aliases, functions, env vars). Relative paths resolve from Vim's cwd. Example: `let g:vimshell_rc = '~/.vimshellrc'` |
 | `g:vimshell_tui_cmds` | (editors, pagers, monitors...) | First words that auto-open a terminal (prefix anything else with `!`) |
 
@@ -101,6 +101,15 @@ let g:vimshell_prompt = '❮$PWD❯ ~> '
 A lone `$` is literal. Anything else (`$?`, `$#`...) is removed: the
 prompt must stay static so it can be recognized. Single-line prompts
 only.
+
+For dynamic prompts, use shell commands directly. If the prompt contains
+pipes (`|`), command substitution (`$()` or backticks), or semicolons,
+it is evaluated by the shell. `$VAR` variables are expanded first, then
+the shell runs the command. Example:
+
+```vim
+let g:vimshell_prompt = 'pwd | sed "s|^$HOME|~|" > '
+```
 
 ## Honest limitations (no pty, no magic)
 

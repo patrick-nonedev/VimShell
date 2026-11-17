@@ -51,6 +51,6 @@ vim -u NONE -U NONE -N --noplugin -c "set rtp+=." -c "VimShell"
 ## Configuration Variables
 
 - `g:vimshell_shell` — Shell command (default: `$SHELL`)
-- `g:vimshell_prompt` — Prompt template with `$VAR` expansion (default: `'vimsh$ '`)
+- `g:vimshell_prompt` — Prompt template: `$VAR` expansion or shell commands (`pwd | sed ...`). If it contains `|`, `$()`, backticks, or `;`, `$VAR` is expanded first then the shell evaluates the expression. (default: `'vimsh$ '`)
 - `g:vimshell_rc` — Path to a shell script sourced after the shell starts (default: empty). Use it for aliases, functions, or env vars specific to VimShell.
 - `g:vimshell_tui_cmds` — List of commands that auto-open a pty tab

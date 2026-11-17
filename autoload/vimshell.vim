@@ -79,14 +79,18 @@ endfunction
 " $NAME / ${NAME} from the environment (once, so it stays static);
 " leftovers ($?, $# unsets...) are removed: a dynamic PS1 would break
 " prefix matching. A lone $ is literal.
+" If the template contains shell commands ($(), backticks, |, ;), the
+" $VAR-expanded result is evaluated by the shell so expressions like
+" pwd | sed "s|^$HOME|~|" work. Literals are preserved in both modes.
 " getenv() yields "" (Vim) or v:null (Neovim) when missing; both mean
 " removed here.
 function! s:Env(name) abort
   let l:v = getenv(a:name)
   return type(l:v) == type('') ? l:v : ''
 endfunction
-function! s:ExpandPrompt() abort
-  let l:p = substitute(s:Prompt(), '\$\$', "\x01", 'g')
+" Expand $VAR / ${VAR} in a prompt template (static expansion).
+function! s:ExpandVars(template) abort
+  let l:p = substitute(a:template, '\$\$', "\x01", 'g')
   let l:shell = split(get(g:, 'vimshell_shell', $SHELL))
   let l:vars = {'PWD': getcwd(), 'HOME': $HOME, 'USER': $USER,
         \ 'SHELL': empty(l:shell) ? 'sh' : l:shell[0],
@@ -101,6 +105,33 @@ function! s:ExpandPrompt() abort
   let l:p = substitute(l:p, '\$\w\+', '', 'g')
   let l:p = substitute(l:p, '\$[!?#$*@0-9(-]', '', 'g')
   return substitute(l:p, "\x01", '$', 'g')
+endfunction
+function! s:ExpandPrompt() abort
+  let l:raw = s:Prompt()
+  " If the prompt contains shell command syntax, expand $VAR first,
+  " then evaluate the result via the shell.
+  if l:raw =~# '[`$][(]\||\|;'
+    let l:expanded = s:ExpandVars(l:raw)
+    " Strip trailing incomplete redirects (like '> ') that would break
+    " the shell command, then append them back after evaluation.
+    let l:suffix = ''
+    if l:expanded =~# '[[:space:]]*>[[:space:]]*$'
+      let l:suffix = matchstr(l:expanded, '[[:space:]]*>[[:space:]]*$')
+      let l:expanded = substitute(l:expanded, '[[:space:]]*>[[:space:]]*$', '', '')
+    endif
+    let l:shell = get(g:, 'vimshell_shell', $SHELL)
+    let l:tmp = tempname()
+    call writefile([l:expanded], l:tmp)
+    let l:cmd = l:shell . ' ' . shellescape(l:tmp)
+    let l:result = system(l:cmd)
+    call delete(l:tmp)
+    if v:shell_error
+      return s:ExpandVars(l:raw)
+    endif
+    return trim(l:result) . l:suffix
+  endif
+  " Static $VAR expansion only.
+  return s:ExpandVars(l:raw)
 endfunction
 
 " PS1 text as printed by the shell (single expansion per session).

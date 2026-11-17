@@ -99,12 +99,16 @@ g:vimshell_shell          Default: $SHELL (or 'sh')
 
 g:vimshell_prompt         Default: 'vimsh$ '
     Prompt template, expanded when the shell starts and re-expanded
-    on every plain cd (so $PWD follows you): $PWD (Vim
-    cwd at that moment), $HOME, $USER, $SHELL, $HOSTNAME, any other
-    $NAME from the environment (missing is removed) and their ${...}
-    forms; $$ is a literal $, a lone $ stays literal. Anything else
-    ($?, $#...) is removed so the prompt stays static and
-    recognizable. Single-line only.
+    on every plain cd. Two modes:
+    - Simple: $VAR expansion. $PWD (Vim cwd), $HOME, $USER, $SHELL,
+      $HOSTNAME, any $NAME from the environment (missing is removed),
+      ${...} forms; $$ is literal $, lone $ stays literal. Other
+      special vars ($?, $#...) are removed so the prompt stays static.
+    - Commands: if the template contains pipes (|), command
+      substitution ($() or backticks), or semicolons, $VAR is expanded
+      first, then the expression is evaluated by the shell. Example: >
+        let g:vimshell_prompt = 'pwd | sed "s|^$HOME|~|" > '
+    Single-line only.
 
 g:vimshell_rc             Default: (empty, no rc loaded)
     Path to a shell script to source after the shell starts. Use it
