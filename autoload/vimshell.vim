@@ -103,23 +103,30 @@ function! s:ExpandVars(template) abort
   let l:p = substitute(l:p, '\$\([A-Za-z_][A-Za-z0-9_]*\)\>', '\=s:Env(submatch(1))', 'g')
   let l:p = substitute(l:p, '\${[^}]*}', '', 'g')
   let l:p = substitute(l:p, '\$\w\+', '', 'g')
-  let l:p = substitute(l:p, '\$[!?#$*@0-9(-]', '', 'g')
+  let l:p = substitute(l:p, '\$[!?#$*@0-9-]', '', 'g')
   return substitute(l:p, "\x01", '$', 'g')
 endfunction
 function! s:ExpandPrompt() abort
   let l:raw = s:Prompt()
   " If the prompt contains shell command syntax, expand $VAR first,
-  " then evaluate the result via the shell.
+  " then evaluate the result via the shell using eval so that $(...)
+  " and backticks expand like they do in PS1.
   if l:raw =~# '[`$][(]\||\|;'
     let l:expanded = s:ExpandVars(l:raw)
-    " Strip trailing incomplete redirects (like '> ') that would break
-    " the shell command, then append them back after evaluation.
+    " Strip trailing literal suffix (like '> ') that is not part of the
+    " shell command, then append it back after evaluation.
     let l:suffix = ''
     if l:expanded =~# '[[:space:]]*>[[:space:]]*$'
       let l:suffix = matchstr(l:expanded, '[[:space:]]*>[[:space:]]*$')
       let l:expanded = substitute(l:expanded, '[[:space:]]*>[[:space:]]*$', '', '')
     endif
     let l:shell = get(g:, 'vimshell_shell', $SHELL)
+    " If the expanded prompt is a bare substitution ($(...) or `...`),
+    " wrap it with echo so it produces output.
+    if l:expanded =~# '^\s*\$(' || l:expanded =~# '^\s*`'
+      let l:expanded = 'echo ' . l:expanded
+    endif
+    " Write the expanded prompt to a temp file and execute it.
     let l:tmp = tempname()
     call writefile([l:expanded], l:tmp)
     let l:cmd = l:shell . ' ' . shellescape(l:tmp)
