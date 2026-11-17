@@ -715,7 +715,7 @@ function! s:Escape(name, space) abort
   if a:name ==# ''
     return ''
   endif
-  let l:out = escape(a:name, " \t\n*?[]{}()<>|&;$`'\"\\!#~")
+  let l:out = escape(a:name, " \t\n*?[]{}()<>|&;$`'\"\\!#")
   return l:out . (a:space ? ' ' : '')
 endfunction
 
@@ -763,7 +763,7 @@ function! vimshell#Complete() abort
   let l:head = strpart(l:input, 0, l:ts)
   let l:frag = strpart(l:input, l:ts, l:te - l:ts)
   let l:after = strpart(l:input, l:te)
-  if matchstr(l:head . l:frag, '^\s*\zs.*') !~# '\s'
+  if matchstr(l:head . l:frag, '^\s*\zs.*') !~# '\s' && l:frag !~# '[/]' && l:frag[0] !=# '~'
     if l:frag ==# ''
       return ''
     endif
