@@ -106,6 +106,14 @@ g:vimshell_prompt         Default: 'vimsh$ '
     ($?, $#...) is removed so the prompt stays static and
     recognizable. Single-line only.
 
+g:vimshell_rc             Default: (empty, no rc loaded)
+    Path to a shell script to source after the shell starts. Use it
+    to set aliases, functions, or environment variables specific to
+    VimShell. The file is read with "source", so it runs in the same
+    shell process. Relative paths are resolved from Vim's cwd.
+    Example: >
+        let g:vimshell_rc = '~/.vimshellrc'
+
 g:vimshell_tui_cmds       Default: editors, pagers, monitors...
     First words that auto-open a terminal region. Prefix anything
     else with ! yourself.

@@ -195,7 +195,22 @@ function! s:StartJob() abort
     let b:vimshell_dead = 1
   else
     let b:vimshell_dead = 0
+    call s:SourceRc()
   endif
+endfunction
+
+" Source the user's rc script (g:vimshell_rc) if it exists.
+function! s:SourceRc() abort
+  let l:rc = get(g:, 'vimshell_rc', '')
+  if l:rc ==# ''
+    return
+  endif
+  let l:rc = fnamemodify(l:rc, ':p')
+  if !filereadable(l:rc)
+    call s:Note('[vimshell] rc file not found: ' . l:rc)
+    return
+  endif
+  call s:SendRaw('source ' . shellescape(l:rc) . "\n")
 endfunction
 
 " The buffer is always editable: no locking old prompts or any region.
