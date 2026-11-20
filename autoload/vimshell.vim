@@ -213,10 +213,9 @@ function! s:StartJob() abort
     let b:vimshell_dead = 1
     return
   endif
-  " PS1 ends with newline so prompts flush as complete lines instead
-  " of merging with the next output line. The sentinel in front marks
-  " where the previous command's output ended.
-  let l:ps1 = s:sentinel . b:vimshell_ps1 . (b:vimshell_ps1 =~# '\n$' ? '' : "\n")
+  " Start with an empty PS1 so the shell doesn't print a prompt before
+  " we've sourced the rc. The real PS1 (with sentinel) is set after
+  " sourcing the rc in a single compound command, avoiding a double prompt.
   call s:Unlock()
   let b:vimshell_job = job_start(l:argv, {
         \ 'in_io': 'pipe',
@@ -228,29 +227,35 @@ function! s:StartJob() abort
         \ 'err_cb': function('vimshell#OnErr', [bufnr('')]),
         \ 'exit_cb': function('vimshell#OnExit', [bufnr('')]),
         \ 'env': {'TERM': 'dumb', 'PAGER': 'cat', 'MANPAGER': 'cat',
-        \         'PS1': l:ps1, 'PS2': s:ps2}})
+        \         'PS1': '', 'PS2': s:ps2}})
   if job_status(b:vimshell_job) !=# 'run'
     call s:Note('[vimshell] could not start: ' . join(l:argv))
     let b:vimshell_dead = 1
   else
     let b:vimshell_dead = 0
-    call s:SourceRc()
+    call s:SourceRcAndPrompt()
   endif
 endfunction
 
-" Source the user's rc script (g:vimshell_rc) if it exists.
-function! s:SourceRc() abort
+" Source the user's rc script (g:vimshell_rc) and set the real PS1.
+" PS1 is empty at this point, so the source doesn't produce a prompt.
+" The compound command sets PS1 with the sentinel so the next prompt
+" is recognized by the output handler.
+function! s:SourceRcAndPrompt() abort
+  let l:ps1 = s:sentinel . b:vimshell_ps1 . (b:vimshell_ps1 =~# '\n$' ? '' : "\n")
+  let l:cmd = 'export PS1=' . shellescape(l:ps1)
   let l:rc = get(g:, 'vimshell_rc', '')
-  if l:rc ==# ''
-    return
+  if l:rc !=# ''
+    let l:rc = fnamemodify(l:rc, ':p')
+    if filereadable(l:rc)
+      let l:cmd = 'source ' . shellescape(l:rc) . '; ' . l:cmd
+    else
+      call s:Note('[vimshell] rc file not found: ' . l:rc)
+    endif
   endif
-  let l:rc = fnamemodify(l:rc, ':p')
-  if !filereadable(l:rc)
-    call s:Note('[vimshell] rc file not found: ' . l:rc)
-    return
-  endif
-  call s:SendRaw('source ' . shellescape(l:rc) . "\n")
+  call s:SendRaw(l:cmd . "\n")
 endfunction
+
 
 " The buffer is always editable: no locking old prompts or any region.
 function! vimshell#SyncModifiable() abort
