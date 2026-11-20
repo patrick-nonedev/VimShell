@@ -120,18 +120,19 @@ function! s:ExpandPrompt() abort
       let l:suffix = matchstr(l:expanded, '[[:space:]]*>[[:space:]]*$')
       let l:expanded = substitute(l:expanded, '[[:space:]]*>[[:space:]]*$', '', '')
     endif
-    " Use bash -c for evaluation so the shell config (fish, zsh...) doesn't
-    " inject noise or set v:shell_error. The prompt uses POSIX syntax ($(), |).
-    let l:shell_cmd = 'bash'
-    if !executable(l:shell_cmd)
-      let l:shell_cmd = 'sh'
-    endif
+    " Use the configured shell to evaluate the prompt expression.
+    " Write to a temp file instead of shellescape() to preserve $(),
+    " backticks, and pipes which shellescape would escape.
+    let l:shell = get(g:, 'vimshell_shell', $SHELL)
     " If the expanded prompt is a bare substitution ($(...) or `...`),
     " wrap it with echo so it produces output.
     if l:expanded =~# '^\s*\$(' || l:expanded =~# '^\s*`'
       let l:expanded = 'echo ' . l:expanded
     endif
-    let l:result = system(l:shell_cmd . ' -c ' . shellescape(l:expanded))
+    let l:tmp = tempname()
+    call writefile([l:expanded], l:tmp)
+    let l:result = system(l:shell . ' ' . shellescape(l:tmp))
+    call delete(l:tmp)
     if v:shell_error
       return s:ExpandVars(l:raw)
     endif
